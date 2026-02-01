@@ -1,0 +1,125 @@
+{
+  "users": [
+    {
+      "employeeId": "EMP001",
+      "name": "John Employee",
+      "email": "john@company.com",
+      "role": "employee"
+    },
+    {
+      "employeeId": "EMP002",
+      "name": "Jane Employee",
+      "email": "jane@company.com",
+      "role": "employee"
+    },
+    {
+      "employeeId": "HR001",
+      "name": "Alex HR",
+      "email": "alex@company.com",
+      "role": "hr"
+    },
+    {
+      "employeeId": "1",
+      "name": "Sara Ali Zaki",
+      "email": null,
+      "role": "employee"
+    },
+    {
+      "employeeId": "2",
+      "name": "Mohamed Mamdouh Mousa",
+      "email": null,
+      "role": "employee"
+    },
+    {
+      "employeeId": "3",
+      "name": "Maryam Sayed Ahmed",
+      "email": null,
+      "role": "employee"
+    },
+    {
+      "employeeId": "4",
+      "name": "Amgad Mohamed Elhelaly",
+      "email": null,
+      "role": "employee"
+    },
+    {
+      "employeeId": "5",
+      "name": "Omar Nasser",
+      "email": null,
+      "role": "employee"
+    }
+  ],
+  "leaveBalances": [
+    {
+      "id": 1,
+      "employeeId": "EMP001",
+      "year": 2026,
+      "totalDays": 20,
+      "usedDays": 3,
+      "remainingDays": 17
+    },
+    {
+      "id": 2,
+      "employeeId": "EMP002",
+      "year": 2026,
+      "totalDays": 20,
+      "usedDays": 2,
+      "remainingDays": 18
+    }
+  ],
+  "leaveRequests": [
+    {
+      "id": 1,
+      "employeeId": "EMP001",
+      "employeeName": "John Employee",
+      "fromDate": "2026-02-01",
+      "toDate": "2026-02-03",
+      "reason": "Personal leave",
+      "status": "pending",
+      "createdAt": "2026-01-30T19:16:52.834Z"
+    },
+    {
+      "id": 2,
+      "employeeId": "EMP002",
+      "employeeName": "Jane Employee",
+      "fromDate": "2026-01-25",
+      "toDate": "2026-01-26",
+      "reason": "Sick leave",
+      "status": "approved",
+      "createdAt": "2026-01-30T19:16:52.837Z"
+    }
+  ],
+  "attendance": [
+    {
+      "id": 1,
+      "employeeId": "EMP001",
+      "date": "2026-01-24",
+      "checkInTime": "09:30:00",
+      "checkOutTime": "18:00:00",
+      "status": "present",
+      "createdAt": "2026-01-30T19:16:52.849Z",
+      "updatedAt": "2026-01-30T19:16:52.849Z"
+    },
+    {
+      "id": 2,
+      "employeeId": "EMP001",
+      "date": "2026-01-23",
+      "checkInTime": "09:45:00",
+      "checkOutTime": "17:45:00",
+      "status": "present",
+      "createdAt": "2026-01-30T19:16:52.849Z",
+      "updatedAt": "2026-01-30T19:16:52.849Z"
+    },
+    {
+      "id": 3,
+      "employeeId": "EMP002",
+      "date": "2026-01-24",
+      "checkInTime": null,
+      "checkOutTime": null,
+      "status": "absent",
+      "createdAt": "2026-01-30T19:16:52.849Z",
+      "updatedAt": "2026-01-30T19:16:52.849Z"
+    }
+  ],
+  "exportedAt": "2026-01-30T19:42:41.048Z"
+}
