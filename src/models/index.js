@@ -2,7 +2,12 @@ const fs = require("fs");
 const { Sequelize } = require("sequelize");
 
 // Prefer SQLite fallback if a local sqlite file exists or if FORCE_SQLITE=true
-const useSqlite = process.env.FORCE_SQLITE === "true" || fs.existsSync(process.env.SQLITE_FILE || "backend_dev.sqlite");
+const isProduction = process.env.NODE_ENV === "production";
+
+const useSqlite =
+  !isProduction &&
+  (process.env.FORCE_SQLITE === "true" ||
+    fs.existsSync(process.env.SQLITE_FILE || "backend_dev.sqlite"));
 
 let sequelize;
 if (useSqlite) {
