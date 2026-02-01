@@ -1,5 +1,4 @@
 const { Attendance, sequelize } = require("../models");
-const fingerprintService = require("../services/fingerprintService");
 
 const getTodayStatus = async (req, res) => {
   try {
@@ -116,17 +115,11 @@ const testFingerprintAttendance = async (req, res) => {
     }
 
     try {
-      const attendance = await fingerprintService.getTodayAttendance(employeeId);
-      return res.status(200).json({ success: true, data: attendance || null });
+      // Return empty data since fingerprint service is removed
+      return res.status(200).json({ success: true, data: null });
     } catch (err) {
-      console.error("[Attendance] Fingerprint DB error:", err && err.message ? err.message : err);
-      if (err && (err.code === "FINGERPRINT_DB_MISSING" || err.code === "FINGERPRINT_DB_NOT_FOUND" || err.code === "FINGERPRINT_DB_CONN_FAILED")) {
-        return res.status(503).json({ success: false, error: "Fingerprint database unavailable" });
-      }
-      if (err && err.code === "FINGERPRINT_DB_TIMEOUT") {
-        return res.status(503).json({ success: false, error: "Fingerprint database timeout" });
-      }
-      return res.status(500).json({ success: false, error: "Failed to query fingerprint attendance" });
+      console.error("[Attendance] Error:", err && err.message ? err.message : err);
+      return res.status(500).json({ success: false, error: "Failed to fetch attendance data" });
     }
   } catch (error) {
     console.error("Test fingerprint attendance error:", error);

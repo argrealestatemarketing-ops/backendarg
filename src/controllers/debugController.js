@@ -1,5 +1,4 @@
 const { User, LeaveBalance, LeaveRequest, Attendance } = require("../models");
-const importer = require("../services/fingerprintImportService");
 
 const getUsers = async (req, res) => {
   try {

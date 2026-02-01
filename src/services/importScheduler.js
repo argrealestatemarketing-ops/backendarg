@@ -1,5 +1,5 @@
 const cron = require("node-cron");
-const importer = require("./fingerprintImportService");
+// Fingerprint import service has been removed
 const { ImportJob } = require("../models");
 
 function startScheduler() {
