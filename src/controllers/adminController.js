@@ -1,5 +1,5 @@
 const fileImporter = require("../services/fileImportService");
-const { ImportJob } = require("../models");
+const ImportJob = require("../models/mongo/ImportJob");
 
 const importFingerprint = async (req, res) => {
   const { startDate, endDate, dryRun } = req.body || {};

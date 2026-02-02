@@ -1,11 +1,46 @@
 const app = require("./app");
 const config = require("./src/config/config");
-const { sequelize } = require("./src/models");
+
+// Conditionally import models based on environment
+let sequelize;
+if (process.env.NODE_ENV === 'production') {
+  // In production, get sequelize from models (will be placeholder)
+  const models = require("./src/models");
+  sequelize = models.sequelize;
+} else {
+  // In development, get sequelize directly
+  ({ sequelize } = require("./src/models"));
+}
+
 const mongoDB = require("./src/config/mongodb");
 const winston = require("winston");
 const DailyRotateFile = require("winston-daily-rotate-file");
 
-const PORT = config.PORT || 3000;
+// Validate required environment variables
+function validateEnvironment() {
+  const requiredEnvVars = [];
+  
+  // In production, MongoDB Atlas connection is required
+  if (process.env.NODE_ENV === 'production') {
+    requiredEnvVars.push('MONGODB_URI', 'JWT_SECRET');
+  } else {
+    // In development, at least one database connection should be available
+    requiredEnvVars.push('JWT_SECRET');
+  }
+  
+  const missing = requiredEnvVars.filter(envVar => !process.env[envVar]);
+  
+  if (missing.length > 0) {
+    console.error(`❌ Missing required environment variables: ${missing.join(', ')}`);
+    console.error('Required variables for production: MONGODB_URI, JWT_SECRET');
+    console.error('Required variables for development: JWT_SECRET');
+    process.exit(1);
+  }
+}
+
+validateEnvironment();
+
+const PORT = config.PORT || process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 const NODE_ENV = process.env.NODE_ENV || "development";
 
@@ -57,7 +92,7 @@ class Application {
 
   async initializeDatabase() {
     try {
-      // Initialize MongoDB connection as primary database
+      // Initialize MongoDB connection as primary database (mandatory)
       try {
         await mongoDB.connect();
         logger.info("MongoDB connection established as primary database");
@@ -66,12 +101,14 @@ class Application {
         throw mongoError; // Make MongoDB mandatory as per requirements
       }
       
-      // Initialize SQLite/MySQL database as secondary (optional)
+      // Initialize SQLite/MySQL database as secondary (optional, skipped in production)
+      const isProduction = process.env.NODE_ENV === "production";
       const shouldAutoSync = 
-        NODE_ENV === "development" || 
-        process.env.FORCE_SQLITE === "true" || 
-        !!process.env.SQLITE_FILE ||
-        process.env.AUTO_SYNC_DB === "true";
+        !isProduction && (
+          process.env.FORCE_SQLITE === "true" || 
+          !!process.env.SQLITE_FILE ||
+          process.env.AUTO_SYNC_DB === "true"
+        );
 
       if (shouldAutoSync) {
         try {
@@ -89,6 +126,8 @@ class Application {
         } catch (sqlError) {
           logger.warn("Secondary database initialization failed (optional):", sqlError.message);
         }
+      } else if (isProduction) {
+        logger.info("Secondary database initialization skipped in production mode");
       }
       
       logger.info("Database connections initialized successfully");
@@ -169,7 +208,7 @@ class Application {
           }
           
           // إغلاق اتصالات قاعدة البيانات
-          if (sequelize) {
+          if (sequelize && typeof sequelize.close === 'function') {
             await sequelize.close();
             logger.info("Database connections closed");
           }

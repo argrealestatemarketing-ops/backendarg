@@ -1,0 +1,18 @@
+# Render deployment configuration
+services:
+- type: web
+  name: hr-attendance-backend
+  runtime: node
+  buildCommand: npm install
+  startCommand: npm run start
+  envVars:
+  - key: NODE_ENV
+    value: production
+  - key: MONGODB_URI
+    sync: false  # Will be set in Render dashboard
+  - key: JWT_SECRET
+    sync: false  # Will be set in Render dashboard
+  - key: PORT
+    value: 3000
+  healthCheckPath: /
+  autoDeploy: true

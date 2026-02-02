@@ -1,4 +1,5 @@
-const { LeaveBalance, LeaveRequest } = require("../models");
+const LeaveBalance = require("../models/mongo/LeaveBalance");
+const LeaveRequest = require("../models/mongo/LeaveRequest");
 
 const getLeaveBalance = async (req, res) => {
   try {

@@ -61,7 +61,7 @@ const appConfig = {
     : ["http://localhost:3000", "http://localhost:4000"],
   
   // Database
-  DB_TYPE: process.env.DB_TYPE || "sqlite",
+  DB_TYPE: process.env.NODE_ENV === 'production' ? 'mongodb' : (process.env.DB_TYPE || "sqlite"),
   DB_HOST: process.env.DB_HOST,
   DB_PORT: parseInt(process.env.DB_PORT) || 3306,
   DB_NAME: process.env.DB_NAME || "hr_attendance",
@@ -103,7 +103,7 @@ const appConfig = {
 if (appConfig.NODE_ENV === "production") {
   const requiredEnvVars = [
     "JWT_SECRET",
-    "DB_TYPE",
+    "MONGODB_URI",
     "ALLOWED_ORIGINS"
   ];
   
@@ -115,11 +115,8 @@ if (appConfig.NODE_ENV === "production") {
     process.exit(1);
   }
   
-  // تأكد من أننا لا نستخدم SQLite في الإنتاج
-  if (appConfig.DB_TYPE === "sqlite") {
-    console.warn("⚠️  WARNING: SQLite is not recommended for production use");
-    console.warn("   Consider using PostgreSQL or MySQL for production");
-  }
+  // In production, we use MongoDB only
+  console.log("   Production mode: MongoDB Atlas only, Sequelize disabled");
 }
 
 // 📊 توليد تقرير الإعدادات (لا يعرض بيانات حساسة)

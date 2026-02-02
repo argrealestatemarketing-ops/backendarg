@@ -5,7 +5,7 @@ const config = require("../config/config");
 const User = require("../models/mongo/User");
 const LoginAttempt = require("../models/mongo/LoginAttempt");
 const AuditLog = require("../models/mongo/AuditLog");
-const { Op } = require("sequelize"); // Import Sequelize operators (keeping for backward compatibility)
+// Sequelize operators not needed for MongoDB - removing this line
 const { auditLogger } = require("../utils/logger");
 const PasswordUtils = require("../utils/passwordUtils");
 

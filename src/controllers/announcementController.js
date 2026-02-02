@@ -1,4 +1,4 @@
-const { Announcement } = require("../models");
+const Announcement = require("../models/mongo/Announcement");
 
 const createAnnouncement = async (req, res) => {
   try {

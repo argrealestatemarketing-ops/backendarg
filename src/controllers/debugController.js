@@ -1,4 +1,7 @@
-const { User, LeaveBalance, LeaveRequest, Attendance } = require("../models");
+const User = require("../models/mongo/User");
+const LeaveBalance = require("../models/mongo/LeaveBalance");
+const LeaveRequest = require("../models/mongo/LeaveRequest");
+const Attendance = require("../models/mongo/Attendance");
 
 const getUsers = async (req, res) => {
   try {

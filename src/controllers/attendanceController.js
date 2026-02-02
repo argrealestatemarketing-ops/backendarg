@@ -1,4 +1,5 @@
-const { Attendance, sequelize } = require("../models");
+const Attendance = require("../models/mongo/Attendance");
+const User = require("../models/mongo/User");
 
 const getTodayStatus = async (req, res) => {
   try {
@@ -79,16 +80,13 @@ const getMonthlyAttendance = async (req, res) => {
     const startDate = new Date(yearNum, monthNum - 1, 1);
     const endDate = new Date(yearNum, monthNum, 0); // Last day of the month
 
-    const monthlyAttendance = await Attendance.findAll({
-      where: {
-        employeeId: employeeId,
-        date: {
-          [sequelize.Op.gte]: startDate,
-          [sequelize.Op.lte]: endDate
-        }
-      },
-      order: [['date', 'ASC']]
-    });
+    const monthlyAttendance = await Attendance.find({
+      employeeId: employeeId,
+      date: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    }).sort({ date: 1 });
 
     res.status(200).json({
       success: true,
@@ -179,7 +177,8 @@ const getNotCheckedInToday = async (req, res) => {
   try {
     const today = new Date().toISOString().split("T")[0];
     
-    const { User } = require("../models");
+    // User model is already imported at the top of the file
+    // const { User } = require("../models");
 
     // Get all employees
     const employees = await User.findAll({

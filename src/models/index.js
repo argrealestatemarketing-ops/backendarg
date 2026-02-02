@@ -1,51 +1,97 @@
 const fs = require("fs");
-const { Sequelize } = require("sequelize");
 
-// Prefer SQLite fallback if a local sqlite file exists or if FORCE_SQLITE=true
+// Production mode: Only use MongoDB Atlas
 const isProduction = process.env.NODE_ENV === "production";
 
-const useSqlite =
-  !isProduction &&
-  (process.env.FORCE_SQLITE === "true" ||
-    fs.existsSync(process.env.SQLITE_FILE || "backend_dev.sqlite"));
+let sequelize = null;
+let User = null;
+let Attendance = null;
+let LeaveRequest = null;
+let Announcement = null;
+let LeaveBalance = null;
+let AuditLog = null;
+let ImportJob = null;
+let BlacklistedToken = null;
+let LoginAttempt = null;
+let RefreshToken = null;
 
-let sequelize;
-if (useSqlite) {
-  sequelize = new Sequelize({
-    dialect: "sqlite",
-    storage: process.env.SQLITE_FILE || "backend_dev.sqlite",
-    logging: false,
+if (isProduction) {
+  // In production, we don't initialize Sequelize at all
+  // All data operations will use MongoDB directly via Mongoose
+  console.log("DB: Production mode - Sequelize disabled, using MongoDB Atlas only");
+  
+  // Create dummy objects to satisfy imports (these will never be used in production)
+  // Actual data operations will be handled by MongoDB models in src/models/mongo/
+  sequelize = {
+    authenticate: () => Promise.resolve(),
+    sync: () => Promise.resolve(),
+    close: () => Promise.resolve(),
+    options: { dialect: 'mongodb' } // Indicate we're using MongoDB
+  };
+  
+  // Create minimal placeholder models that throw errors if used in production
+  const createPlaceholderModel = (modelName) => ({
+    findOne: () => { throw new Error(`Sequelize ${modelName} model should not be used in production. Use MongoDB models instead.`); },
+    findAll: () => { throw new Error(`Sequelize ${modelName} model should not be used in production. Use MongoDB models instead.`); },
+    create: () => { throw new Error(`Sequelize ${modelName} model should not be used in production. Use MongoDB models instead.`); },
+    update: () => { throw new Error(`Sequelize ${modelName} model should not be used in production. Use MongoDB models instead.`); },
+    destroy: () => { throw new Error(`Sequelize ${modelName} model should not be used in production. Use MongoDB models instead.`); }
   });
-  console.log("DB: Using SQLite (fallback)");
+  
+  User = createPlaceholderModel('User');
+  Attendance = createPlaceholderModel('Attendance');
+  LeaveRequest = createPlaceholderModel('LeaveRequest');
+  Announcement = createPlaceholderModel('Announcement');
+  LeaveBalance = createPlaceholderModel('LeaveBalance');
+  AuditLog = createPlaceholderModel('AuditLog');
+  ImportJob = createPlaceholderModel('ImportJob');
+  BlacklistedToken = createPlaceholderModel('BlacklistedToken');
+  LoginAttempt = createPlaceholderModel('LoginAttempt');
+  RefreshToken = createPlaceholderModel('RefreshToken');
 } else {
-  sequelize = new Sequelize(
-    process.env.DB_NAME || "hr_attendance",
-    process.env.DB_USER || "root",
-    process.env.DB_PASSWORD || "password",
-    {
-      host: process.env.DB_HOST || "127.0.0.1",
-      port: process.env.DB_PORT || 3306,
-      dialect: "mysql",
+  // In development, initialize Sequelize as before
+  const { Sequelize } = require("sequelize");
+  
+  if (process.env.FORCE_SQLITE === "true" ||
+      fs.existsSync(process.env.SQLITE_FILE || "backend_dev.sqlite")) {
+    // In development, allow SQLite fallback
+    sequelize = new Sequelize({
+      dialect: "sqlite",
+      storage: process.env.SQLITE_FILE || "backend_dev.sqlite",
       logging: false,
-    }
-  );
-  console.log("DB: Using MySQL configuration");
+    });
+    console.log("DB: Using SQLite (development fallback)");
+  } else {
+    // Use MySQL for other non-production environments
+    sequelize = new Sequelize(
+      process.env.DB_NAME || "hr_attendance",
+      process.env.DB_USER || "root",
+      process.env.DB_PASSWORD || "password",
+      {
+        host: process.env.DB_HOST || "127.0.0.1",
+        port: process.env.DB_PORT || 3306,
+        dialect: "mysql",
+        logging: false,
+      }
+    );
+    console.log("DB: Using MySQL configuration");
+  }
+
+  const { DataTypes } = require("sequelize");
+
+  User = require("./user")(sequelize);
+  Attendance = require("./attendance")(sequelize);
+  LeaveRequest = require("./leaveRequest")(sequelize);
+  Announcement = require("./announcement")(sequelize);
+  LeaveBalance = require("./leaveBalance")(sequelize);
+  AuditLog = require("./auditLog")(sequelize);
+  ImportJob = require("./importJob")(sequelize);
+  const { BlacklistedToken: BT, LoginAttempt: LA, RefreshToken: RT } = require("./BlacklistedToken");
+
+  BlacklistedToken = BT(sequelize);
+  LoginAttempt = LA(sequelize);
+  RefreshToken = RT(sequelize);
 }
-
-const { DataTypes } = require("sequelize");
-
-const User = require("./user")(sequelize);
-const Attendance = require("./attendance")(sequelize);
-const LeaveRequest = require("./leaveRequest")(sequelize);
-const Announcement = require("./announcement")(sequelize);
-const LeaveBalance = require("./leaveBalance")(sequelize);
-const AuditLog = require("./auditLog")(sequelize);
-const ImportJob = require("./importJob")(sequelize);
-const { BlacklistedToken, LoginAttempt, RefreshToken } = require("./BlacklistedToken");
-
-const BlacklistedTokenModel = BlacklistedToken(sequelize);
-const LoginAttemptModel = LoginAttempt(sequelize);
-const RefreshTokenModel = RefreshToken(sequelize);
 
 module.exports = {
   sequelize,
@@ -56,7 +102,7 @@ module.exports = {
   LeaveBalance,
   AuditLog,
   ImportJob,
-  BlacklistedToken: BlacklistedTokenModel,
-  LoginAttempt: LoginAttemptModel,
-  RefreshToken: RefreshTokenModel
+  BlacklistedToken,
+  LoginAttempt,
+  RefreshToken
 };

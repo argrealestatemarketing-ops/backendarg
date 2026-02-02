@@ -201,7 +201,29 @@ app.use((req, res, next) => {
   next();
 });
 
-// ==================== 7. HEALTH & STATUS ENDPOINTS ====================
+// ==================== 7. ROOT & HEALTH ENDPOINTS ====================
+// Root route for Render health checks
+app.get("/", (req, res) => {
+  res.status(200).json({ 
+    status: "ok",
+    message: "HR Attendance API is running",
+    timestamp: new Date().toISOString(),
+    service: "hr-attendance-api",
+    version: process.env.npm_package_version || "1.0.0",
+    environment: process.env.NODE_ENV || "development",
+    uptime: process.uptime(),
+    endpoints: [
+      "/ping",
+      "/api/health",
+      "/api/auth",
+      "/api/attendance",
+      "/api/leave",
+      "/api/announcements",
+      "/api/admin"
+    ]
+  });
+});
+
 app.get("/ping", (req, res) => {
   res.status(200).json({ 
     status: "ok",
