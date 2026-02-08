@@ -1,27 +1,69 @@
-const Attendance = require("../models/mongo/Attendance");
-const User = require("../models/mongo/User");
+const Attendance = require("../models/repositories/Attendance");
+const User = require("../models/repositories/User");
+const excelService = require("../services/excelEmployeeService");
+const { auditLogger } = require("../utils/logger");
+
+function formatDateOnly(date) {
+  return date.toISOString().split("T")[0];
+}
+
+function startOfDay(dateString) {
+  const d = new Date(dateString);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+function endOfDay(dateString) {
+  const d = new Date(dateString);
+  d.setUTCHours(23, 59, 59, 999);
+  return d;
+}
+
+function resolveEmployeeScope(req, res) {
+  const employeeId = (req.params.employeeId || "").trim();
+
+  if (!employeeId) {
+    res.status(400).json({
+      success: false,
+      error: "Valid employee ID is required"
+    });
+    return null;
+  }
+
+  if (req.user && req.user.role === "employee" && req.user.employeeId !== employeeId) {
+    res.status(403).json({
+      success: false,
+      error: "Forbidden: You can only access your own attendance"
+    });
+    return null;
+  }
+
+  return employeeId;
+}
+
+function toAttendanceResponse(record) {
+  return {
+    id: record._id.toString(),
+    employeeId: record.employeeId,
+    date: formatDateOnly(new Date(record.date)),
+    checkInTime: record.checkInTime || null,
+    checkOutTime: record.checkOutTime || null,
+    status: record.status || "absent"
+  };
+}
 
 const getTodayStatus = async (req, res) => {
   try {
-    const { employeeId } = req.params;
-    
-    if (!employeeId || typeof employeeId !== "string") {
-      return res.status(400).json({ 
-        success: false,
-        error: "Valid employee ID is required" 
-      });
-    }
+    const employeeId = resolveEmployeeScope(req, res);
+    if (!employeeId) return;
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = formatDateOnly(new Date());
+    const record = await Attendance.findOne({
+      employeeId,
+      date: { $gte: startOfDay(today), $lte: endOfDay(today) }
+    }).lean();
 
-    const attendanceRecord = await Attendance.findOne({
-      where: {
-        employeeId: employeeId,
-        date: today
-      }
-    });
-
-    if (!attendanceRecord) {
+    if (!record) {
       return res.status(200).json({
         success: true,
         status: "not_checked_in",
@@ -31,232 +73,191 @@ const getTodayStatus = async (req, res) => {
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      status: attendanceRecord.status,
-      checkInTime: attendanceRecord.checkInTime,
-      checkOutTime: attendanceRecord.checkOutTime,
-      date: today
+      ...toAttendanceResponse(record)
     });
   } catch (error) {
-    console.error("Get today status error:", error);
-    res.status(500).json({ 
+    auditLogger.error("Get today status error", {
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json({
       success: false,
-      error: "Failed to get today status" 
+      error: "Failed to get today status"
     });
   }
 };
 
 const getMonthlyAttendance = async (req, res) => {
   try {
-    const { employeeId } = req.params;
-    const { year, month } = req.query;
+    const employeeId = resolveEmployeeScope(req, res);
+    if (!employeeId) return;
 
-    if (!employeeId) {
-      return res.status(400).json({ 
+    const yearNum = Number.parseInt(req.query.year, 10);
+    const monthNum = Number.parseInt(req.query.month, 10);
+
+    if (!Number.isInteger(yearNum) || !Number.isInteger(monthNum) || monthNum < 1 || monthNum > 12) {
+      return res.status(400).json({
         success: false,
-        error: "Employee ID is required" 
+        error: "Invalid year or month format"
       });
     }
 
-    if (!year || !month) {
-      return res.status(400).json({ 
-        success: false,
-        error: "Year and month query parameters are required" 
-      });
-    }
-
-    const yearNum = parseInt(year);
-    const monthNum = parseInt(month);
-
-    if (isNaN(yearNum) || isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
-      return res.status(400).json({ 
-        success: false,
-        error: "Invalid year or month format" 
-      });
-    }
-
-    // Create start and end dates for the month
-    const startDate = new Date(yearNum, monthNum - 1, 1);
-    const endDate = new Date(yearNum, monthNum, 0); // Last day of the month
+    const startDate = new Date(Date.UTC(yearNum, monthNum - 1, 1, 0, 0, 0, 0));
+    const endDate = new Date(Date.UTC(yearNum, monthNum, 0, 23, 59, 59, 999));
 
     const monthlyAttendance = await Attendance.find({
-      employeeId: employeeId,
-      date: {
-        $gte: startDate,
-        $lte: endDate
-      }
-    }).sort({ date: 1 });
+      employeeId,
+      date: { $gte: startDate, $lte: endDate }
+    })
+      .sort({ date: 1 })
+      .lean();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       month: monthNum,
       year: yearNum,
       count: monthlyAttendance.length,
-      data: monthlyAttendance
+      data: monthlyAttendance.map((record) => toAttendanceResponse(record))
     });
   } catch (error) {
-    console.error("Get monthly attendance error:", error);
-    res.status(500).json({ 
+    auditLogger.error("Get monthly attendance error", {
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json({
       success: false,
-      error: "Failed to get monthly attendance" 
+      error: "Failed to get monthly attendance"
     });
   }
 };
-
-// Test endpoint to read attendance for today from Fingerprint Access DB (READ ONLY)
-const testFingerprintAttendance = async (req, res) => {
-  try {
-    const { employeeId } = req.params;
-    if (!employeeId) {
-      return res.status(400).json({ success: false, error: "Employee ID is required" });
-    }
-
-    try {
-      // Return empty data since fingerprint service is removed
-      return res.status(200).json({ success: true, data: null });
-    } catch (err) {
-      console.error("[Attendance] Error:", err && err.message ? err.message : err);
-      return res.status(500).json({ success: false, error: "Failed to fetch attendance data" });
-    }
-  } catch (error) {
-    console.error("Test fingerprint attendance error:", error);
-    return res.status(500).json({ success: false, error: "Internal server error" });
-  }
-};
-
-
 
 const getAttendanceDetail = async (req, res) => {
   try {
-    const { employeeId, date } = req.params;
+    const employeeId = resolveEmployeeScope(req, res);
+    if (!employeeId) return;
 
-    if (!employeeId || !date) {
-      return res.status(400).json({ 
+    const { date } = req.params;
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({
         success: false,
-        error: "Employee ID and date are required" 
-      });
-    }
-
-    // Validate date format
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return res.status(400).json({ 
-        success: false,
-        error: "Date must be in YYYY-MM-DD format" 
+        error: "Date must be in YYYY-MM-DD format"
       });
     }
 
     const attendanceRecord = await Attendance.findOne({
-      where: {
-        employeeId: employeeId,
-        date: date
-      }
-    });
+      employeeId,
+      date: { $gte: startOfDay(date), $lte: endOfDay(date) }
+    }).lean();
 
     if (!attendanceRecord) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        error: "No attendance record found for this date" 
+        error: "No attendance record found for this date"
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      data: attendanceRecord
+      data: toAttendanceResponse(attendanceRecord)
     });
   } catch (error) {
-    console.error("Get attendance detail error:", error);
-    res.status(500).json({ 
+    auditLogger.error("Get attendance detail error", {
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json({
       success: false,
-      error: "Failed to get attendance detail" 
+      error: "Failed to get attendance detail"
     });
   }
 };
 
 const getNotCheckedInToday = async (req, res) => {
   try {
-    const today = new Date().toISOString().split("T")[0];
-    
-    // User model is already imported at the top of the file
-    // const { User } = require("../models");
+    const today = formatDateOnly(new Date());
+    const todayStart = startOfDay(today);
+    const todayEnd = endOfDay(today);
 
-    // Get all employees
-    const employees = await User.findAll({
-      where: {
-        role: "employee"
-      },
-      attributes: ["id", "employeeId", "name", "email"]
-    });
+    const [employees, attendanceRecords] = await Promise.all([
+      User.find(
+        { role: "employee", status: { $ne: "inactive" } },
+        { employeeId: 1, name: 1, email: 1 }
+      ).lean(),
+      Attendance.find(
+        {
+          date: { $gte: todayStart, $lte: todayEnd },
+          status: { $in: ["present", "late", "half_day"] }
+        },
+        { employeeId: 1 }
+      ).lean()
+    ]);
 
-    // Get all attendance records for today
-    const attendanceRecords = await Attendance.findAll({
-      where: {
-        date: today
-      },
-      attributes: ["employeeId", "status"]
-    });
-
-    // Create a map for quick lookup
-    const attendanceMap = new Map();
-    attendanceRecords.forEach(record => {
-      attendanceMap.set(record.employeeId, record.status);
-    });
-
-    // Find employees who are not checked in today
+    const checkedInSet = new Set(attendanceRecords.map((record) => record.employeeId));
     const notCheckedIn = employees
-      .map(employee => {
-        const attendanceStatus = attendanceMap.get(employee.employeeId);
-        return {
-          employeeId: employee.employeeId,
-          name: employee.name,
-          email: employee.email,
-          checkedIn: attendanceStatus === "present"
-        };
-      })
-      .filter(emp => !emp.checkedIn);
+      .filter((employee) => !checkedInSet.has(employee.employeeId))
+      .map((employee) => ({
+        employeeId: employee.employeeId,
+        name: employee.name,
+        email: employee.email || null,
+        checkedIn: false
+      }));
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       count: notCheckedIn.length,
       data: notCheckedIn
     });
   } catch (error) {
-    console.error("Get not checked-in error:", error);
-    res.status(500).json({ 
+    auditLogger.error("Get not checked-in employees error", {
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json({
       success: false,
-      error: "Failed to get not checked-in employees" 
+      error: "Failed to get not checked-in employees"
     });
   }
 };
 
-
-const excelService = require("../services/excelEmployeeService");
+const testFingerprintAttendance = async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    error: "Fingerprint service has been removed",
+    message: "This endpoint is no longer available"
+  });
+};
 
 const testExcelEmployee = async (req, res) => {
   try {
     const { employeeId } = req.params;
-    if (!employeeId) return res.status(400).json({ success: false, error: "Employee ID is required" });
+    if (!employeeId) {
+      return res.status(400).json({ success: false, error: "Employee ID is required" });
+    }
 
     if (!excelService || !excelService.isEnabled()) {
       return res.status(503).json({ success: false, error: "Employee Excel source not configured" });
     }
 
-    try {
-      await excelService.init();
-    } catch (e) {
-      console.error("[Attendance] Employee Excel init failed:", e && e.message ? e.message : e);
+    await excelService.init();
+    const exists = await Promise.resolve(excelService.employeeExists(employeeId));
+    return res.status(200).json({ success: true, exists });
+  } catch (error) {
+    auditLogger.error("Test Employee Excel error", {
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+
+    if (error.code === "EMPLOYEE_EXCEL_MISSING") {
       return res.status(503).json({ success: false, error: "Employee Excel file unavailable" });
     }
 
-    try {
-      const exists = await Promise.resolve(excelService.employeeExists(employeeId));
-      return res.status(200).json({ success: true, exists });
-    } catch (e) {
-      console.error("[Attendance] Employee Excel lookup failed:", e && e.message ? e.message : e);
-      return res.status(503).json({ success: false, error: "Employee Excel file unavailable" });
-    }
-  } catch (error) {
-    console.error("Test Employee Excel error:", error);
     return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };

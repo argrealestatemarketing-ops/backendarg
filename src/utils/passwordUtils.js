@@ -1,6 +1,5 @@
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
-const validator = require("validator");
 
 class PasswordUtils {
   // Generate secure random password

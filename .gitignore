@@ -16,3 +16,17 @@ build/
 test-reports/
 logs/
 *.log
+coverage/
+tmp/
+temp_*.json
+data_dump.json
+tmp_*.js
+*.sqlite
+*.sqlite3
+*.db
+*.mdb
+*.accdb
+backend_dev.sqlite
+fingerprint_db/*
+!fingerprint_db/.gitkeep
+!fingerprint_db/README.md

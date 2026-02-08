@@ -6,8 +6,8 @@ const config = require("../config/config");
 let enabled = false;
 let employeeSet = new Set();
 let idToNameMap = new Map();
-let loadedAt = null;
 let fileMtime = null;
+let watcher = null;
 
 const CANDIDATE_HEADERS = [
   "employeeid", "employee id", "employee", "empid", "emp id", "emp", "id", "eid", "badge", "badgeid", "badge id", "cardno", "card_no", "card no"
@@ -43,7 +43,6 @@ function loadFromFile() {
   if (!rows || rows.length === 0) {
     employeeSet = new Set();
     idToNameMap = new Map();
-    loadedAt = new Date();
     enabled = true;
     return;
   }
@@ -94,7 +93,6 @@ function loadFromFile() {
 
   employeeSet = ids;
   idToNameMap = map;
-  loadedAt = new Date();
   enabled = true;
 }
 
@@ -107,16 +105,23 @@ async function init() {
     loadFromFile();
     // Watch file for changes to reload automatically
     const resolved = path.isAbsolute(config.EMPLOYEE_EXCEL_PATH) ? config.EMPLOYEE_EXCEL_PATH : path.resolve(process.cwd(), config.EMPLOYEE_EXCEL_PATH);
-    fs.watch(resolved, (eventType) => {
-      try {
-        // Debounce rapid events by reloading after short timeout
-        setTimeout(() => {
-          try { loadFromFile(); console.log("[ExcelService] Reloaded employees from Excel file"); } catch (e) { console.error("[ExcelService] Reload error:", e && e.message ? e.message : e); }
-        }, 300);
-      } catch (e) {
-        console.error("[ExcelService] File watch handler error:", e);
-      }
-    });
+    if (!watcher) {
+      watcher = fs.watch(resolved, () => {
+        try {
+          // Debounce rapid events by reloading after short timeout
+          setTimeout(() => {
+            try {
+              loadFromFile();
+              console.log("[ExcelService] Reloaded employees from Excel file");
+            } catch (error) {
+              console.error("[ExcelService] Reload error:", error && error.message ? error.message : error);
+            }
+          }, 300);
+        } catch (error) {
+          console.error("[ExcelService] File watch handler error:", error);
+        }
+      });
+    }
   } catch (err) {
     // If file missing or unreadable, keep enabled true but throw to caller so they can decide how to handle
     throw err;

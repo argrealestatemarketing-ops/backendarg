@@ -19,7 +19,7 @@ const BlacklistedToken = (sequelize) => {
       defaultValue: "access"
     },
     userId: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.STRING,
       allowNull: false
     },
     reason: {
@@ -37,12 +37,14 @@ const BlacklistedToken = (sequelize) => {
     }
   }, {
     tableName: "blacklisted_tokens",
+    timestamps: false,
+    underscored: true,
     indexes: [
       {
-        fields: ["userId"]
+        fields: ["user_id"]
       },
       {
-        fields: ["expiresAt"]
+        fields: ["expires_at"]
       }
     ]
   });
@@ -84,12 +86,14 @@ const LoginAttempt = (sequelize) => {
     }
   }, {
     tableName: "login_attempts",
+    timestamps: false,
+    underscored: true,
     indexes: [
       {
-        fields: ["ipAddress", "createdAt"]
+        fields: ["ip_address", "created_at"]
       },
       {
-        fields: ["employeeId", "createdAt"]
+        fields: ["employee_id", "created_at"]
       },
       {
         fields: ["success"]
@@ -107,13 +111,8 @@ const RefreshToken = (sequelize) => {
       autoIncrement: true
     },
     userId: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      references: {
-        model: "users",
-        key: "id"
-      },
-      onDelete: "CASCADE"
+      type: DataTypes.STRING,
+      allowNull: false
     },
     token: {
       type: DataTypes.TEXT,
@@ -160,15 +159,17 @@ const RefreshToken = (sequelize) => {
     }
   }, {
     tableName: "refresh_tokens",
+    timestamps: false,
+    underscored: true,
     indexes: [
       {
-        fields: ["userId"]
+        fields: ["user_id"]
       },
       {
-        fields: ["expiresAt"]
+        fields: ["expires_at"]
       },
       {
-        fields: ["isValid"]
+        fields: ["is_valid"]
       }
     ]
   });

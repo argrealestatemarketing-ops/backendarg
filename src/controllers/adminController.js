@@ -1,10 +1,10 @@
 const fileImporter = require("../services/fileImportService");
-const ImportJob = require("../models/mongo/ImportJob");
+const ImportJob = require("../models/repositories/ImportJob");
+const AuditLog = require("../models/repositories/AuditLog");
+const { auditLogger } = require("../utils/logger");
 
 const importFingerprint = async (req, res) => {
-  const { startDate, endDate, dryRun } = req.body || {};
-  // Fingerprint service has been removed
-  res.status(410).json({ 
+  res.status(410).json({
     success: false, 
     error: "Fingerprint import service has been removed",
     message: "This feature is no longer available"
@@ -13,7 +13,8 @@ const importFingerprint = async (req, res) => {
 
 // POST /api/admin/import/upload (multipart/form-data, file field `file`, optional dryRun boolean)
 const importFromFile = async (req, res) => {
-  const userId = req.user ? req.user.dbUserId : null;
+  const userId = req.user ? String(req.user.id) : null;
+  const actorEmployeeId = req.user ? req.user.employeeId : null;
   const file = req.file;
   const dryRun = req.body && (req.body.dryRun === "true" || req.body.dryRun === "1" || req.body.dryRun === true);
 
@@ -21,31 +22,88 @@ const importFromFile = async (req, res) => {
 
   let job = null;
   try {
-    job = await ImportJob.create({ type: "file_import", status: "running", startedAt: new Date(), createdBy: userId });
+    job = await ImportJob.create({
+      type: "file_upload",
+      status: "running",
+      startedAt: new Date(),
+      createdBy: userId
+    });
 
     const summary = await fileImporter.importFromWorkbook(file.path, { dryRun });
 
-    job.status = "success";
-    job.endedAt = new Date();
-    job.summary = JSON.stringify(summary);
+    job.status = "completed";
+    job.finishedAt = new Date();
+    job.summary = summary;
+    job.result = summary;
     await job.save();
 
-    res.json({ success: true, summary, jobId: job.id });
+    try {
+      await AuditLog.create({
+        actorId: userId || "unknown",
+        actorEmployeeId: actorEmployeeId || "unknown",
+        targetEmployeeId: "N/A",
+        action: "file_import_completed",
+        details: {
+          jobId: String(job._id),
+          dryRun,
+          summary
+        },
+        createdAt: new Date()
+      });
+    } catch (auditError) {
+      auditLogger.warn("Failed to persist import completion audit log", {
+        error: auditError.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    res.json({ success: true, summary, jobId: job._id.toString() });
   } catch (err) {
     if (job) {
       job.status = "failed";
-      job.endedAt = new Date();
-      job.summary = JSON.stringify({ error: err && err.message ? err.message : String(err) });
-      try { await job.save(); } catch (e) { console.error("[ADMIN] Failed to persist file import job:", e); }
+      job.finishedAt = new Date();
+      job.error = err && err.message ? err.message : String(err);
+      job.summary = { error: job.error };
+      try {
+        await job.save();
+      } catch (saveErr) {
+        auditLogger.error("Failed to persist file import job", {
+          error: saveErr.message,
+          timestamp: new Date().toISOString()
+        });
+      }
     }
-    console.error("[ADMIN] importFromFile error:", err && err.message ? err.message : err);
+    auditLogger.error("Admin importFromFile error", {
+      error: err && err.message ? err.message : String(err),
+      timestamp: new Date().toISOString()
+    });
+
+    try {
+      await AuditLog.create({
+        actorId: userId || "unknown",
+        actorEmployeeId: actorEmployeeId || "unknown",
+        targetEmployeeId: "N/A",
+        action: "file_import_failed",
+        details: {
+          dryRun,
+          error: err && err.message ? err.message : String(err)
+        },
+        createdAt: new Date()
+      });
+    } catch (auditError) {
+      auditLogger.warn("Failed to persist import failure audit log", {
+        error: auditError.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     res.status(500).json({ success: false, error: "File import failed", details: err && err.message ? err.message : String(err) });
   }
 };
 
-// POST /api/admin/sync/fingerprint-to-mongo
-const syncFingerprintToMongo = async (req, res) => {
-  // Fingerprint service has been removed
+// POST /api/admin/sync/fingerprint (disabled)
+const syncFingerprintData = async (req, res) => {
+  // Fingerprint sync service is intentionally disabled
   res.status(410).json({ 
     success: false, 
     error: "Fingerprint sync service has been removed",
@@ -53,4 +111,4 @@ const syncFingerprintToMongo = async (req, res) => {
   });
 };
 
-module.exports = { importFingerprint, importFromFile, syncFingerprintToMongo };
+module.exports = { importFingerprint, importFromFile, syncFingerprintData };

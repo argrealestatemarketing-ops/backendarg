@@ -1,6 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const debugController = require("../controllers/debugController");
+const authMiddleware = require("../middleware/authMiddleware");
+const roleMiddleware = require("../middleware/roleMiddleware");
+
+router.use(authMiddleware.verifyAccessToken.bind(authMiddleware));
+router.use(roleMiddleware(["hr", "admin"]));
 
 // Dev-only routes to inspect DB
 router.get("/users", debugController.getUsers);

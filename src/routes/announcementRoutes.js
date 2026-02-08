@@ -10,7 +10,7 @@ const verifyAuth = (req, res, next) => {
   return authMiddleware.verifyAccessToken(req, res, next);
 };
 
-router.post("/", verifyAuth, roleMiddleware(["hr"]), announcementController.createAnnouncement);
+router.post("/", verifyAuth, roleMiddleware(["hr", "admin"]), announcementController.createAnnouncement);
 router.get("/", verifyAuth, announcementController.getAnnouncements);
 router.get("/:announcementId", verifyAuth, announcementController.getAnnouncementById);
 

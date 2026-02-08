@@ -1,7 +1,8 @@
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const config = require("../config/config");
-const User = require("../models/mongo/User");
-const BlacklistedToken = require("../models/mongo/BlacklistedToken"); // Assuming this exists or will be created
+const User = require("../models/repositories/User");
+const BlacklistedToken = require("../models/repositories/BlacklistedToken");
 const { auditLogger } = require("../utils/logger");
 
 class AuthMiddleware {
@@ -68,9 +69,16 @@ class AuthMiddleware {
 
       // البحث عن المستخدم
       const user = await User.findById(decoded.id, {
-        '_id': 1, 'employeeId': 1, 'name': 1, 'email': 1, 'role': 1,
-        'mustChangePassword': 1, 'passwordChangedAt': 1, 'tokenVersion': 1,
-        'status': 1, 'lockedUntil': 1
+        "_id": 1,
+        employeeId: 1,
+        name: 1,
+        email: 1,
+        role: 1,
+        mustChangePassword: 1,
+        passwordChangedAt: 1,
+        tokenVersion: 1,
+        status: 1,
+        lockedUntil: 1
       });
 
       if (!user) {
@@ -89,7 +97,8 @@ class AuthMiddleware {
       }
 
       // التحقق من حالة الحساب
-      if (user.status !== 'active') {
+      const status = user.status || "active";
+      if (status !== "active") {
         auditLogger.warn("Access attempt for inactive account", {
           path: req.originalUrl,
           method: req.method,
@@ -293,7 +302,11 @@ class AuthMiddleware {
       
       return !!blacklisted;
     } catch (error) {
-      console.error("Error checking token blacklist:", error);
+      auditLogger.error("Error checking token blacklist", {
+        error: error.message,
+        stack: error.stack,
+        timestamp: new Date().toISOString()
+      });
       return false;
     }
   }
@@ -302,7 +315,6 @@ class AuthMiddleware {
    * تشفير الـ Token للتخزين
    */
   hashToken(token) {
-    const crypto = require("crypto");
     return crypto.createHash("sha256").update(token).digest("hex");
   }
 

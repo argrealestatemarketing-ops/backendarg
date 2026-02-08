@@ -12,7 +12,7 @@ router.get("/not-checked-in", authMiddleware.verifyAccessToken.bind(authMiddlewa
 
 // Read-only test endpoint to query fingerprint Access DB (fingerprint service removed)
 // router.get("/test/:employeeId", attendanceController.testFingerprintAttendance);
-// Read-only test endpoint to query Employee Excel (no auth for testing)
-router.get("/test-excel/:employeeId", attendanceController.testExcelEmployee);
+// Read-only test endpoint to query Employee Excel
+router.get("/test-excel/:employeeId", authMiddleware.verifyAccessToken.bind(authMiddleware), roleMiddleware(["hr", "admin"]), attendanceController.testExcelEmployee);
 
 module.exports = router;

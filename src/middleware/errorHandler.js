@@ -1,3 +1,5 @@
+const { logger } = require("../utils/logger");
+
 class AppError extends Error {
   constructor(message, statusCode, isOperational = true) {
     super(message);
@@ -13,12 +15,12 @@ const notFoundHandler = (req, res, next) => {
   next(error);
 };
 
+// eslint-disable-next-line no-unused-vars
 const errorHandler = (err, req, res, next) => {
   err.statusCode = err.statusCode || 500;
   err.status = err.status || "error";
 
-  // Log error
-  console.error("Error:", {
+  logger.error("Unhandled request error", {
     requestId: req.requestId,
     timestamp: new Date().toISOString(),
     path: req.originalUrl,
@@ -51,7 +53,12 @@ const errorHandler = (err, req, res, next) => {
       });
     } else {
       // Programming or unknown errors
-      console.error("💥 UNEXPECTED ERROR:", err);
+      logger.error("Unexpected non-operational error", {
+        requestId: req.requestId,
+        error: err.message,
+        stack: err.stack,
+        name: err.name
+      });
       res.status(500).json({
         success: false,
         error: "Something went wrong!",

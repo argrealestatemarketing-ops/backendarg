@@ -16,9 +16,9 @@ router.get("/requests", verifyAuth, leaveController.getLeaveRequests);
 router.post("/request", verifyAuth, leaveController.requestLeave);
 
 // HR routes
-router.get("/all", verifyAuth, roleMiddleware(["hr"]), leaveController.getAllLeaveRequests);
-router.post("/approve/:requestId", verifyAuth, roleMiddleware(["hr"]), leaveController.approveLeaveRequest);
-router.post("/reject/:requestId", verifyAuth, roleMiddleware(["hr"]), leaveController.rejectLeaveRequest);
-router.get("/pending/count", verifyAuth, roleMiddleware(["hr"]), leaveController.getPendingLeaveRequestsCount);
+router.get("/all", verifyAuth, roleMiddleware(["hr", "admin"]), leaveController.getAllLeaveRequests);
+router.post("/approve/:requestId", verifyAuth, roleMiddleware(["hr", "admin"]), leaveController.approveLeaveRequest);
+router.post("/reject/:requestId", verifyAuth, roleMiddleware(["hr", "admin"]), leaveController.rejectLeaveRequest);
+router.get("/pending/count", verifyAuth, roleMiddleware(["hr", "admin"]), leaveController.getPendingLeaveRequestsCount);
 
 module.exports = router;

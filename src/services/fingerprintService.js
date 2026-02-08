@@ -43,7 +43,6 @@ const DEFAULT_OPTIONS = {
 };
 
 let connection = null;
-let activeProvider = null;
 let initialized = false;
 let initializedError = null;
 
@@ -86,13 +85,11 @@ async function init() {
       try {
         // We do a harmless limited query to validate connectivity
         await connection.query("SELECT TOP 1 1 FROM [CHECKINOUT]");
-        activeProvider = connStr;
         initialized = true;
         console.info("[FingerprintService] Connected to Access DB using provider. Path:", dbPath);
         return;
-      } catch (qErr) {
+      } catch {
         // Table may not exist. Consider this provider valid; keep it as active provider.
-        activeProvider = connStr;
         initialized = true;
         console.info("[FingerprintService] Provider accepted (table test failed but provider seems usable).");
         return;
@@ -110,7 +107,6 @@ async function init() {
 
       // Try next provider
       connection = null;
-      activeProvider = null;
       continue;
     }
   }
@@ -281,7 +277,7 @@ async function getTodayAttendance(employeeId) {
             }
           }
         }
-      } catch (err) {
+      } catch {
         // ignore and continue
         continue;
       }
@@ -488,7 +484,7 @@ async function getAttendanceInRange(startDate, endDate) {
             results.push({ employeeId: String(r.PIN).trim(), checkTime: parsed, raw: r });
           }
         }
-      } catch (err) {
+      } catch {
         // ignore table errors
       }
     }
@@ -510,7 +506,7 @@ async function getAttendanceInRange(startDate, endDate) {
             results.push({ employeeId: String(r.PIN).trim(), checkTime: dt, raw: r });
           }
         }
-      } catch (err) {
+      } catch {
         // ignore
       }
     }

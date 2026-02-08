@@ -1,7 +1,206 @@
 const XLSX = require("xlsx");
-const { sequelize, User, Attendance } = require("../models");
+const bcrypt = require("bcryptjs");
+const User = require("../models/repositories/User");
+const Attendance = require("../models/repositories/Attendance");
 
-// Accepts a workbook path or a workbook object and options { dryRun }
+function toUtcDateOnly(dateString) {
+  const [year, month, day] = dateString.split("-").map((v) => Number.parseInt(v, 10));
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+}
+
+function dateRangeForDay(dateString) {
+  const start = toUtcDateOnly(dateString);
+  const end = new Date(start.getTime());
+  end.setUTCHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+function normalizeEmployeeCandidates(rawPin) {
+  const value = String(rawPin).trim();
+  const candidates = [value];
+
+  if (/^\d+$/.test(value)) {
+    const normalized = value.replace(/^0+/, "") || "0";
+    candidates.push(`EMP${normalized.padStart(3, "0")}`);
+    candidates.push(normalized.padStart(3, "0"));
+    candidates.push(normalized.padStart(4, "0"));
+  }
+
+  return [...new Set(candidates)];
+}
+
+function extractUsersFromWorkbook(workbook) {
+  const users = new Map();
+  const sheetNamesLower = workbook.SheetNames.map((s) => s.toLowerCase());
+  const usersSheetName = workbook.SheetNames[sheetNamesLower.indexOf("users")];
+
+  if (usersSheetName) {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[usersSheetName], { defval: null });
+    for (const row of rows) {
+      const pin = row.Pin || row.PIN || row.pin || row.EmployeeId || row.employeeId || row.EmployeeID || row.ID || row.Id;
+      const name = row.Name || row.FullName || row.NAME;
+      if (!pin) continue;
+
+      const pinString = String(pin).trim();
+      users.set(pinString, {
+        pin: pinString,
+        name: name ? String(name).trim() : null
+      });
+    }
+  }
+
+  return users;
+}
+
+function extractAttendanceRowsFromWorkbook(workbook) {
+  const attendanceRows = [];
+  const sheetNamesLower = workbook.SheetNames.map((s) => s.toLowerCase());
+  const attendanceSheetName = workbook.SheetNames[sheetNamesLower.indexOf("attendance")];
+
+  const parseRows = (rows) => {
+    for (const row of rows) {
+      const pin = row.Pin || row.PIN || row.pin || row.EmployeeId || row.employeeId || row.EmployeeID || row.ID || row.Id;
+      const dateValue = row.Date || row.date || row.CheckDate || row.CHECKDATE || row.Check_Date;
+      const timeValue = row.Time || row.time || row.CheckTime || row.CHECKTIME || row.Check_Time;
+      if (!pin || !dateValue) continue;
+
+      const parsed = timeValue ? new Date(`${dateValue} ${timeValue}`) : new Date(String(dateValue));
+      if (Number.isNaN(parsed.getTime())) continue;
+
+      attendanceRows.push({
+        employeeId: String(pin).trim(),
+        checkTime: parsed
+      });
+    }
+  };
+
+  if (attendanceSheetName) {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[attendanceSheetName], { defval: null });
+    parseRows(rows);
+    return attendanceRows;
+  }
+
+  if (workbook.SheetNames.length > 0) {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null });
+    parseRows(rows);
+  }
+
+  return attendanceRows;
+}
+
+async function upsertUsers(users, summary, { dryRun, passwordHash }) {
+  for (const [, userInfo] of users.entries()) {
+    const employeeCandidates = normalizeEmployeeCandidates(userInfo.pin);
+    const canonicalEmployeeId = employeeCandidates.find((id) => id.startsWith("EMP")) || employeeCandidates[0];
+    const name = userInfo.name || `User ${canonicalEmployeeId}`;
+
+    const existing = await User.findOne({
+      employeeId: { $in: employeeCandidates }
+    });
+
+    if (existing) {
+      const updates = {};
+      if (!existing.name || !existing.name.trim()) {
+        updates.name = name;
+      }
+      if (!existing.password) {
+        updates.password = passwordHash;
+        updates.mustChangePassword = true;
+      }
+
+      if (Object.keys(updates).length > 0) {
+        summary.usersUpdated += 1;
+        if (!dryRun) {
+          await User.updateOne({ _id: existing._id }, { $set: updates });
+        }
+      }
+      continue;
+    }
+
+    summary.usersCreated += 1;
+    if (!dryRun) {
+      try {
+        await User.create({
+          employeeId: canonicalEmployeeId,
+          name,
+          role: "employee",
+          password: passwordHash,
+          mustChangePassword: true,
+          tokenVersion: 0,
+          status: "active"
+        });
+      } catch (error) {
+        summary.errors.push({
+          type: "user_create",
+          employeeId: canonicalEmployeeId,
+          error: error.message
+        });
+      }
+    }
+  }
+}
+
+async function upsertAttendance(attendanceRows, summary, { dryRun }) {
+  const rowsByEmployeeAndDate = new Map();
+
+  for (const row of attendanceRows) {
+    const employeeCandidates = normalizeEmployeeCandidates(row.employeeId);
+    const canonicalEmployeeId = employeeCandidates.find((id) => id.startsWith("EMP")) || employeeCandidates[0];
+    const dateKey = row.checkTime.toISOString().split("T")[0];
+    const key = `${canonicalEmployeeId}::${dateKey}`;
+
+    if (!rowsByEmployeeAndDate.has(key)) {
+      rowsByEmployeeAndDate.set(key, []);
+    }
+    rowsByEmployeeAndDate.get(key).push(row.checkTime);
+  }
+
+  for (const [key, times] of rowsByEmployeeAndDate.entries()) {
+    const [employeeId, dateKey] = key.split("::");
+    times.sort((a, b) => a - b);
+
+    const checkIn = times[0];
+    const checkOut = times.length > 1 ? times[times.length - 1] : null;
+    const checkInText = checkIn ? checkIn.toISOString().split("T")[1].substring(0, 8) : null;
+    const checkOutText = checkOut ? checkOut.toISOString().split("T")[1].substring(0, 8) : null;
+
+    const { start, end } = dateRangeForDay(dateKey);
+    const existing = await Attendance.findOne({
+      employeeId,
+      date: { $gte: start, $lte: end }
+    });
+
+    if (!existing) {
+      summary.attendanceCreated += 1;
+      if (!dryRun) {
+        await Attendance.create({
+          employeeId,
+          date: start,
+          checkInTime: checkInText,
+          checkOutTime: checkOutText,
+          status: checkInText ? "present" : "absent"
+        });
+      }
+      continue;
+    }
+
+    const updates = {};
+    if (checkInText && existing.checkInTime !== checkInText) {
+      updates.checkInTime = checkInText;
+    }
+    if (checkOutText && existing.checkOutTime !== checkOutText) {
+      updates.checkOutTime = checkOutText;
+    }
+    if (Object.keys(updates).length > 0) {
+      summary.attendanceUpdated += 1;
+      if (!dryRun) {
+        await Attendance.updateOne({ _id: existing._id }, { $set: updates });
+      }
+    }
+  }
+}
+
+// Accepts a workbook path or workbook object and options { dryRun }
 async function importFromWorkbook(workbook, { dryRun = false } = {}) {
   const summary = {
     usersFound: 0,
@@ -20,161 +219,24 @@ async function importFromWorkbook(workbook, { dryRun = false } = {}) {
       wb = XLSX.readFile(workbook);
     }
 
-    // Heuristics: look for sheets named 'users' and 'attendance' (case-insensitive)
-    const sheetNames = wb.SheetNames.map(s => s.toLowerCase());
-    const usersSheetName = wb.SheetNames[sheetNames.indexOf("users")];
-    const attendanceSheetName = wb.SheetNames[sheetNames.indexOf("attendance")];
-
-    const users = new Map();
-
-    // If a users sheet exists, parse users
-    if (usersSheetName) {
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[usersSheetName], { defval: null });
-      for (const r of rows) {
-        // Accept common columns: Pin, EmployeeId, Name
-        const pin = r.Pin || r.PIN || r.pin || r.EmployeeId || r.employeeId || r.EmployeeID || (r.ID || r.Id) || null;
-        const name = r.Name || r.FullName || r.NAME || null;
-        if (!pin) continue;
-        users.set(String(pin).trim(), { pin: String(pin).trim(), name: name ? String(name).trim() : null });
-      }
-    }
-
-    // If attendance sheet exists, parse attendance rows
-    const attendanceRows = [];
-    if (attendanceSheetName) {
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[attendanceSheetName], { defval: null });
-      for (const r of rows) {
-        const pin = r.Pin || r.PIN || r.pin || r.EmployeeId || r.employeeId || r.EmployeeID || (r.ID || r.Id) || null;
-        const dateVal = r.Date || r.date || r.CheckDate || r.Check_Date || null;
-        const timeVal = r.Time || r.time || r.CheckTime || r.Check_Time || null;
-        const checkType = r.Type || r.type || r.CheckType || null; // optional
-        if (!pin || !dateVal) continue;
-
-        // Combine date + time if provided
-        let dt = null;
-        if (timeVal) {
-          dt = new Date(String(dateVal) + " " + String(timeVal));
-        } else {
-          dt = new Date(String(dateVal));
-        }
-        if (isNaN(dt.getTime())) {
-          summary.warnings.push({ row: r, reason: "Unparsable date/time" });
-          continue;
-        }
-        attendanceRows.push({ employeeId: String(pin).trim(), checkTime: dt });
-      }
-    }
-
-    // If no dedicated sheets, try first sheet as combined layout
-    if (!usersSheetName && !attendanceSheetName && wb.SheetNames.length > 0) {
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: null });
-      for (const r of rows) {
-        const pin = r.Pin || r.PIN || r.pin || r.EmployeeId || r.employeeId || r.EmployeeID || (r.ID || r.Id) || null;
-        const name = r.Name || r.FullName || r.NAME || null;
-        const dateVal = r.Date || r.date || r.CheckDate || r.Check_Date || null;
-        const timeVal = r.Time || r.time || r.CheckTime || r.Check_Time || null;
-        if (pin && (dateVal || name)) {
-          if (name) users.set(String(pin).trim(), { pin: String(pin).trim(), name: String(name).trim() });
-          if (dateVal) {
-            let dt = null;
-            if (timeVal) dt = new Date(String(dateVal) + " " + String(timeVal));
-            else dt = new Date(String(dateVal));
-            if (!isNaN(dt.getTime())) attendanceRows.push({ employeeId: String(pin).trim(), checkTime: dt });
-            else summary.warnings.push({ row: r, reason: "Unparsable date/time" });
-          }
-        }
-      }
-    }
+    const users = extractUsersFromWorkbook(wb);
+    const attendanceRows = extractAttendanceRowsFromWorkbook(wb);
 
     summary.usersFound = users.size;
     summary.attendanceRowsFound = attendanceRows.length;
 
-    await sequelize.authenticate();
+    const defaultPassword = process.env.IMPORT_DEFAULT_PASSWORD || "ChangeMe@123";
+    const passwordHash = await bcrypt.hash(defaultPassword, 10);
 
-    // Prepare default password (configurable via IMPORT_DEFAULT_PASSWORD)
-    const bcrypt = require("bcryptjs");
-    const defaultPwd = process.env.IMPORT_DEFAULT_PASSWORD || "123456";
-    const defaultPwdHash = await bcrypt.hash(defaultPwd, 10);
-
-    // Upsert users
-    for (const [pin, u] of users.entries()) {
-      const name = u.name || `User ${pin}`;
-      // Reuse importFingerprint-style normalization: canonical EMP### for numeric
-      let candidate = pin;
-      if (/^\d+$/.test(pin)) candidate = "EMP" + pin.replace(/^0+/, "").padStart(3, "0");
-
-      const existing = await User.findOne({ where: { employeeId: candidate } }) || await User.findOne({ where: { employeeId: pin } });
-      if (existing) {
-        const updates = {};
-        if (!existing.name || existing.name.trim().length === 0) updates.name = name;
-        // If existing user somehow has no password (shouldn't happen), set default and require change
-        if (!existing.password) {
-          updates.password = defaultPwdHash;
-          updates.mustChangePassword = true;
-        }
-        if (Object.keys(updates).length > 0) {
-          summary.usersUpdated++;
-          if (!dryRun) await existing.update(updates);
-        }
-      } else {
-        summary.usersCreated++;
-        if (!dryRun) {
-          try {
-            await User.create({ employeeId: candidate, name, email: null, role: "employee", password: defaultPwdHash, mustChangePassword: true, tokenVersion: 0 });
-          } catch (err) {
-            summary.errors.push({ type: "user_create", employeeId: candidate, error: err.message });
-          }
-        }
-      }
-    }
-
-    // Upsert attendance rows
-    const byEmpDate = new Map();
-    for (const r of attendanceRows) {
-      const d = r.checkTime;
-      const dateKey = d.toISOString().split("T")[0];
-      const key = `${r.employeeId}::${dateKey}`;
-      if (!byEmpDate.has(key)) byEmpDate.set(key, []);
-      byEmpDate.get(key).push(d);
-    }
-
-    for (const [key, times] of byEmpDate.entries()) {
-      const [employeeId, date] = key.split("::");
-      times.sort((a,b) => a - b);
-      const checkIn = times[0];
-      const checkOut = times.length > 1 ? times[times.length - 1] : null;
-
-      // Try existing EMP mapping
-      let employeeIdToUse = employeeId;
-      if (/^\d+$/.test(employeeId)) employeeIdToUse = "EMP" + employeeId.replace(/^0+/, "").padStart(3, "0");
-
-      const where = { employeeId: employeeIdToUse, date };
-      const defaults = { checkInTime: checkIn ? checkIn.toTimeString().split(" ")[0] : null, checkOutTime: checkOut ? checkOut.toTimeString().split(" ")[0] : null, status: checkIn ? "present" : "absent" };
-
-      try {
-        const [row, created] = await Attendance.findOrCreate({ where, defaults });
-        if (created) summary.attendanceCreated++;
-        else {
-          const updates = {};
-          const existingIn = row.checkInTime ? row.checkInTime : null;
-          const existingOut = row.checkOutTime ? row.checkOutTime : null;
-          const newIn = defaults.checkInTime;
-          const newOut = defaults.checkOutTime;
-          if (newIn && existingIn !== newIn) updates.checkInTime = newIn;
-          if (newOut && existingOut !== newOut) updates.checkOutTime = newOut;
-          if (Object.keys(updates).length > 0) {
-            summary.attendanceUpdated++;
-            if (!dryRun) await row.update(updates);
-          }
-        }
-      } catch (err) {
-        summary.errors.push({ type: "attendance_upsert", key, error: err.message });
-      }
-    }
+    await upsertUsers(users, summary, { dryRun, passwordHash });
+    await upsertAttendance(attendanceRows, summary, { dryRun });
 
     return summary;
-  } catch (err) {
-    summary.errors.push({ type: "general", error: err && err.message ? err.message : String(err) });
+  } catch (error) {
+    summary.errors.push({
+      type: "general",
+      error: error && error.message ? error.message : String(error)
+    });
     return summary;
   }
 }

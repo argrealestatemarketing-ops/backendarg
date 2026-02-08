@@ -18,11 +18,21 @@ module.exports = (sequelize) => {
     failedLoginAttempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
     // If locked, store the timestamp until which lock is active
     lockedUntil: { type: DataTypes.DATE, allowNull: true },
-    // Whether the user account is active
-    isActive: { type: DataTypes.BOOLEAN, allowNull: true, defaultValue: true },
+    status: {
+      type: DataTypes.ENUM("active", "inactive", "locked"),
+      allowNull: false,
+      defaultValue: "active"
+    },
+    lastLoginAt: { type: DataTypes.DATE, allowNull: true }
   }, {
     tableName: "users",
     timestamps: true,
     underscored: true,
+    indexes: [
+      { unique: true, fields: ["employee_id"] },
+      { unique: true, fields: ["email"] },
+      { fields: ["status"] },
+      { fields: ["locked_until"] }
+    ]
   });
 };

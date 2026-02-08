@@ -7,7 +7,16 @@ const roleMiddleware = require("../middleware/roleMiddleware");
 const router = express.Router();
 
 // Simple login rate limiter to mitigate brute force
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true });
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: "Too many login attempts from this IP. Please try again later."
+  }
+});
 
 // Wrapper functions to properly bind the controller methods
 const verifyAuth = (req, res, next) => {
@@ -46,7 +55,7 @@ router.get("/verify", verifyAuth, (req, res) => {
 router.post("/change-password", verifyAuth, changePassword);
 
 // Admin password reset (HR only)
-router.post("/admin/reset-password", verifyAuth, roleMiddleware(["hr"]), resetPassword);
+router.post("/admin/reset-password", verifyAuth, roleMiddleware(["hr", "admin"]), resetPassword);
 
 // Token refresh endpoint
 router.post("/refresh-token", refreshToken);
@@ -54,6 +63,6 @@ router.post("/refresh-token", refreshToken);
 // Logout endpoint
 router.post("/logout", verifyAuth, logout);
 
-router.post("/reset-rate-limit", resetRateLimit);
+router.post("/reset-rate-limit", verifyAuth, roleMiddleware(["hr", "admin"]), resetRateLimit);
 
 module.exports = router;

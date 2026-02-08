@@ -1,13 +1,12 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const crypto = require("crypto");
 const config = require("../config/config");
-const User = require("../models/mongo/User");
-const LoginAttempt = require("../models/mongo/LoginAttempt");
-const AuditLog = require("../models/mongo/AuditLog");
-// Sequelize operators not needed for MongoDB - removing this line
+const User = require("../models/repositories/User");
+const LoginAttempt = require("../models/repositories/LoginAttempt");
+const AuditLog = require("../models/repositories/AuditLog");
 const { auditLogger } = require("../utils/logger");
 const PasswordUtils = require("../utils/passwordUtils");
+const TIMING_SAFE_HASH = bcrypt.hashSync("timing-safe-placeholder", 10);
 
 class AuthController {
   constructor() {
@@ -25,6 +24,7 @@ class AuthController {
     
     const attempts = await LoginAttempt.countDocuments({
       ipAddress,
+      employeeId,
       createdAt: { $gte: windowStart }
     });
 
@@ -34,20 +34,28 @@ class AuthController {
   /**
    * تسجيل محاولة تسجيل دخول
    */
-  async recordLoginAttempt(ipAddress, employeeId, success) {
+  async recordLoginAttempt(ipAddress, employeeId, success, { userAgent = "unknown", failureReason = null } = {}) {
     await LoginAttempt.create({
       ipAddress,
       employeeId,
       success,
-      userAgent: "unknown", // يمكن إضافة من الـ request
+      userAgent,
+      failureReason,
       createdAt: new Date()
     });
 
     // تنظيف السجلات القديمة
     const cleanupDate = new Date(Date.now() - (24 * 60 * 60 * 1000)); // 24 ساعة
-    await LoginAttempt.deleteMany({
-      createdAt: { $lt: cleanupDate }
-    });
+    try {
+      await LoginAttempt.deleteMany({
+        createdAt: { $lt: cleanupDate }
+      });
+    } catch (cleanupError) {
+      auditLogger.warn("Failed to cleanup old login attempts", {
+        error: cleanupError.message,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 
   /**
@@ -56,6 +64,7 @@ class AuthController {
   async login(req, res) {
     const { employeeId, password } = req.body;
     const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+    const userAgent = req.get("user-agent") || "unknown";
     const startTime = Date.now();
 
     try {
@@ -103,22 +112,15 @@ class AuthController {
         employeeId: cleanEmployeeId
       });
 
-      console.log('[LOGIN_DEBUG] User lookup result:', {
-        employeeId: cleanEmployeeId,
-        userFound: !!user,
-        userId: user?.id,
-        storedTokenVersion: user?.tokenVersion,
-        storedStatus: user?.status,
-        lockedUntil: user?.lockedUntil,
-        failedAttempts: user?.failedLoginAttempts
-      });
-
       // 🔒 منع تعداد المستخدمين - استخدام نفس الرسالة للخطأ
       if (!user) {
-        await this.recordLoginAttempt(ipAddress, cleanEmployeeId, false);
+        await this.recordLoginAttempt(ipAddress, cleanEmployeeId, false, {
+          userAgent,
+          failureReason: "USER_NOT_FOUND"
+        });
         
         // تأخير وهمي لمنع التوقيت timing attacks
-        await bcrypt.compare(password, "$2a$12$dummyHashForTimingAttackPrevention");
+        await bcrypt.compare(password, TIMING_SAFE_HASH);
         
         auditLogger.warn("Login attempt for non-existent user", {
           ipAddress,
@@ -129,13 +131,13 @@ class AuthController {
         return res.status(401).json({
           success: false,
           error: "Password incorrect",
-          code: 'USER_NOT_FOUND'
+          code: "USER_NOT_FOUND"
         });
       }
 
       // 🔒 التحقق من حالة الحساب
-      const status = user.status || 'active'; // Default to active if field doesn't exist
-      if (status !== 'active') {
+      const status = user.status || "active"; // Default to active if field doesn't exist
+      if (status !== "active") {
         auditLogger.warn("Login attempt for inactive account", {
           ipAddress,
           employeeId: cleanEmployeeId,
@@ -146,7 +148,7 @@ class AuthController {
         return res.status(401).json({
           success: false,
           error: "Account is inactive",
-          code: 'ACCOUNT_INACTIVE'
+          code: "ACCOUNT_INACTIVE"
         });
       }
 
@@ -166,18 +168,13 @@ class AuthController {
         return res.status(423).json({
           success: false,
           error: `Account is locked. Try again in ${remainingMinutes} minutes.`,
-          code: 'ACCOUNT_LOCKED',
+          code: "ACCOUNT_LOCKED",
           lockedUntil: user.lockedUntil
         });
       }
 
       // 🔐 التحقق من كلمة المرور
       const isPasswordValid = await bcrypt.compare(password, user.password);
-      
-      console.log('[LOGIN_DEBUG] Password validation result:', {
-        passwordValid: isPasswordValid,
-        employeeId: cleanEmployeeId
-      });
       
       if (!isPasswordValid) {
         // زيادة عدد المحاولات الفاشلة
@@ -198,7 +195,10 @@ class AuthController {
         }
         
         await User.findByIdAndUpdate(user._id, updates);
-        await this.recordLoginAttempt(ipAddress, cleanEmployeeId, false);
+        await this.recordLoginAttempt(ipAddress, cleanEmployeeId, false, {
+          userAgent,
+          failureReason: "PASSWORD_INCORRECT"
+        });
         
         auditLogger.warn("Failed login attempt", {
           ipAddress,
@@ -227,7 +227,7 @@ class AuthController {
         await User.findByIdAndUpdate(user._id, { lastLoginAt: new Date() });
       }
 
-      await this.recordLoginAttempt(ipAddress, cleanEmployeeId, true);
+      await this.recordLoginAttempt(ipAddress, cleanEmployeeId, true, { userAgent });
 
       // 🔐 إنشاء Tokens
       const accessToken = this.generateAccessToken(user);
@@ -256,17 +256,10 @@ class AuthController {
         email: user.email,
         role: user.role,
         mustChangePassword: user.mustChangePassword,
-        status: user.status || 'active',
+        status: user.status || "active",
         tokenVersion: user.tokenVersion || 0,
         lastLoginAt: user.lastLoginAt
       };
-      
-      console.log('[LOGIN_DEBUG] Successful login for user:', {
-        employeeId: user.employeeId,
-        userId: user.id,
-        tokenVersion: user.tokenVersion,
-        mustChangePassword: user.mustChangePassword
-      });
 
       // If user must change password, return special response
       if (user.mustChangePassword) {
@@ -280,10 +273,6 @@ class AuthController {
           session: {
             expiresIn: config.JWT_ACCESS_EXPIRE,
             refreshExpiresIn: config.JWT_REFRESH_EXPIRE
-          },
-          debug: {
-            timestamp: new Date().toISOString(),
-            tokenVersion: user.tokenVersion
           }
         });
       }
@@ -297,10 +286,6 @@ class AuthController {
         session: {
           expiresIn: config.JWT_ACCESS_EXPIRE,
           refreshExpiresIn: config.JWT_REFRESH_EXPIRE
-        },
-        debug: {
-          timestamp: new Date().toISOString(),
-          tokenVersion: user.tokenVersion
         }
       });
 
@@ -365,17 +350,13 @@ class AuthController {
    * حفظ Refresh Token
    */
   async storeRefreshToken(userId, refreshToken) {
-    // هنا يمكن حفظ الـ token في قاعدة البيانات أو Redis
-    // مع تاريخ انتهاء الصلاحية وإمكانية إبطاله
-    const expiresAt = new Date(Date.now() + (7 * 24 * 60 * 60 * 1000)); // 7 أيام
-    
-    // مثال لحفظ في جدول مخصص
-    // await RefreshToken.create({
-    //   userId,
-    //   token: refreshToken,
-    //   expiresAt,
-    //   isValid: true
-    // });
+    // مكان حفظ refresh token (Redis/DB) يمكن إضافته هنا.
+    // نحتفظ حالياً بتسجيل تدقيقي فقط لحين ربط المخزن النهائي.
+    auditLogger.info("Refresh token issued", {
+      userId,
+      tokenLength: refreshToken ? refreshToken.length : 0,
+      timestamp: new Date().toISOString()
+    });
   }
 
   /**
@@ -471,7 +452,7 @@ class AuthController {
         email: updatedUser.email,
         role: updatedUser.role,
         mustChangePassword: false, // تم تغيير الحالة إلى false
-        tokenVersion: (updatedUser.tokenVersion || 0) + 1
+        tokenVersion: updatedUser.tokenVersion || 0
       });
 
       // إنشاء Refresh Token جديد
@@ -490,8 +471,8 @@ class AuthController {
         email: updatedUser.email,
         role: updatedUser.role,
         mustChangePassword: false, // تم تغيير الحالة إلى false
-        status: updatedUser.status || 'active',
-        tokenVersion: (updatedUser.tokenVersion || 0) + 1,
+        status: updatedUser.status || "active",
+        tokenVersion: updatedUser.tokenVersion || 0,
         lastLoginAt: updatedUser.lastLoginAt
       };
 
@@ -582,7 +563,7 @@ class AuthController {
         email: updatedUser.email,
         role: updatedUser.role,
         mustChangePassword: false, // تم تغييرها لـ false
-        tokenVersion: (updatedUser.tokenVersion || 0) + 1
+        tokenVersion: updatedUser.tokenVersion || 0
       });
 
       // إنشاء Refresh Token جديد
@@ -622,8 +603,8 @@ class AuthController {
         email: updatedUser.email,
         role: updatedUser.role,
         mustChangePassword: false, // تم تغيير الحالة إلى false
-        status: updatedUser.status || 'active',
-        tokenVersion: (updatedUser.tokenVersion || 0) + 1,
+        status: updatedUser.status || "active",
+        tokenVersion: updatedUser.tokenVersion || 0,
         lastLoginAt: updatedUser.lastLoginAt
       };
       
@@ -702,9 +683,7 @@ class AuthController {
         });
       }
 
-      // إنشاء كلمة مرور مؤقتة آمنة
-      const tempPassword = PasswordUtils.generateSecurePassword(12);
-      const hashedPassword = await bcrypt.hash(tempPassword, 12);
+      const hashedPassword = await bcrypt.hash(newPassword, 12);
 
       // تحديث بيانات المستخدم
       await User.findByIdAndUpdate(targetUser._id, {
@@ -741,7 +720,7 @@ class AuthController {
 
       // إرسال البريد الإلكتروني (إذا كان مفعلاً)
       if (sendEmail && targetUser.email) {
-        await this.sendPasswordResetEmail(targetUser, tempPassword);
+        await this.sendPasswordResetEmail(targetUser, newPassword);
       }
 
       const responseTime = Date.now() - startTime;
@@ -754,12 +733,6 @@ class AuthController {
         timestamp: new Date().toISOString(),
         responseTime: `${responseTime}ms`
       };
-
-      // إرجاع كلمة المرور المؤقتة فقط في وضع التطوير
-      if (config.NODE_ENV === "development") {
-        responseData.tempPassword = tempPassword;
-        responseData.warning = "Temporary password shown for development only";
-      }
 
       res.status(200).json(responseData);
 
@@ -808,8 +781,8 @@ class AuthController {
 
       // البحث عن المستخدم
       const user = await User.findById(decoded.id);
-      const status = user && user.status ? user.status : 'active'; // Default to active if field doesn't exist
-      if (!user || status !== 'active') {
+      const status = user && user.status ? user.status : "active"; // Default to active if field doesn't exist
+      if (!user || status !== "active") {
         return res.status(401).json({
           success: false,
           error: "User not found or inactive"
@@ -927,13 +900,14 @@ class AuthController {
           error: "Employee ID is required"
         });
       }
+      const normalizedEmployeeId = String(employeeId).trim().toUpperCase();
       
-      const success = await this.resetUserRateLimit(employeeId);
+      const success = await this.resetUserRateLimit(normalizedEmployeeId);
       
       if (success) {
         return res.status(200).json({
           success: true,
-          message: `Rate limiting reset for user ${employeeId}`
+          message: `Rate limiting reset for user ${normalizedEmployeeId}`
         });
       } else {
         return res.status(500).json({
@@ -1015,12 +989,13 @@ class AuthController {
   /**
    * إرسال بريد إعادة تعيين كلمة المرور
    */
-  async sendPasswordResetEmail(user, tempPassword) {
+  async sendPasswordResetEmail(user, generatedPassword) {
     // تنفيذ إرسال البريد الإلكتروني
     // يمكن استخدام Nodemailer أو خدمة بريد أخرى
     auditLogger.info("Password reset email would be sent", {
       targetEmail: user.email,
       targetEmployeeId: user.employeeId,
+      passwordLength: generatedPassword ? generatedPassword.length : 0,
       timestamp: new Date().toISOString()
     });
   }

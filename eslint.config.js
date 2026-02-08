@@ -1,7 +1,8 @@
 // eslint.config.js
-export default [
+module.exports = [
   {
     files: ["**/*.js"],
+    ignores: ["node_modules/**", "migrations/**", "scripts/**", "smoke-tests/**", "tmp/**"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
@@ -20,7 +21,20 @@ export default [
       quotes: ["error", "double"],
       "no-unused-vars": "warn",
       "no-undef": "error"
-    },
-    ignores: ["node_modules/**", "migrations/**", "scripts/**", "smoke-tests/**", "tmp/**"]
+    }
+  },
+  {
+    files: ["tests/**/*.js"],
+    languageOptions: {
+      globals: {
+        describe: "readonly",
+        it: "readonly",
+        expect: "readonly",
+        beforeAll: "readonly",
+        beforeEach: "readonly",
+        afterAll: "readonly",
+        jest: "readonly"
+      }
+    }
   }
 ];

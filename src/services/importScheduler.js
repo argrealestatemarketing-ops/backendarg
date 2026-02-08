@@ -1,42 +1,63 @@
 const cron = require("node-cron");
-// Fingerprint import service has been removed
-const { ImportJob } = require("../models");
+const ImportJob = require("../models/repositories/ImportJob");
+const { auditLogger } = require("../utils/logger");
 
+/**
+ * Scheduler currently performs operational maintenance only.
+ * Fingerprint auto-import was removed, so this keeps import jobs healthy by
+ * marking stale "running" jobs as failed.
+ */
 function startScheduler() {
   const enabled = process.env.IMPORT_SCHEDULE_ENABLED !== "false";
   if (!enabled) {
-    console.info("[ImportScheduler] Disabled by IMPORT_SCHEDULE_ENABLED=false");
+    auditLogger.info("Import scheduler disabled by configuration", {
+      timestamp: new Date().toISOString()
+    });
     return;
   }
 
-  const schedule = process.env.IMPORT_SCHEDULE_CRON || "0 2 * * *"; // daily at 02:00
-  console.info(`[ImportScheduler] Scheduling import job with cron: "${schedule}"`);
+  const schedule = process.env.IMPORT_SCHEDULE_CRON || "*/30 * * * *"; // every 30 minutes
+  const maxRunningMinutes = Number.parseInt(process.env.IMPORT_JOB_MAX_MINUTES || "120", 10);
 
-  try {
-    cron.schedule(schedule, async () => {
-      console.info("[ImportScheduler] Cron triggered import job");
-      let job = null;
+  auditLogger.info("Import scheduler started", {
+    schedule,
+    maxRunningMinutes,
+    timestamp: new Date().toISOString()
+  });
+
+  cron.schedule(
+    schedule,
+    async () => {
+      const staleBefore = new Date(Date.now() - maxRunningMinutes * 60 * 1000);
       try {
-        job = await ImportJob.create({ type: "fingerprint", status: "running", startedAt: new Date() });
-        const summary = await importer.importFingerprint({ /* defaults to last 30 days */ });
-        job.status = "success";
-        job.endedAt = new Date();
-        job.summary = JSON.stringify(summary);
-        await job.save();
-        console.info("[ImportScheduler] Import job success", summary);
-      } catch (err) {
-        if (job) {
-          job.status = "failed";
-          job.endedAt = new Date();
-          job.summary = JSON.stringify({ error: err && err.message ? err.message : String(err) });
-          try { await job.save(); } catch (e) { console.error("[ImportScheduler] Failed to persist job:", e); }
+        const result = await ImportJob.updateMany(
+          { status: "running", startedAt: { $lt: staleBefore } },
+          {
+            $set: {
+              status: "failed",
+              finishedAt: new Date(),
+              error: "Marked failed by scheduler: stale running job"
+            }
+          }
+        );
+
+        if (result.modifiedCount > 0) {
+          auditLogger.warn("Scheduler marked stale import jobs as failed", {
+            modifiedCount: result.modifiedCount,
+            staleBefore: staleBefore.toISOString(),
+            timestamp: new Date().toISOString()
+          });
         }
-        console.error("[ImportScheduler] Import job failed:", err && err.message ? err.message : err);
+      } catch (error) {
+        auditLogger.error("Import scheduler execution failed", {
+          error: error.message,
+          stack: error.stack,
+          timestamp: new Date().toISOString()
+        });
       }
-    }, { scheduled: true });
-  } catch (err) {
-    console.error("[ImportScheduler] Failed to schedule import job:", err && err.message ? err.message : err);
-  }
+    },
+    { scheduled: true }
+  );
 }
 
 module.exports = { startScheduler };

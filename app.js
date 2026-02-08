@@ -1,4 +1,5 @@
 const express = require("express");
+const crypto = require("crypto");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
@@ -7,7 +8,6 @@ const rateLimit = require("express-rate-limit");
 const xss = require("xss-clean");
 const hpp = require("hpp");
 const cookieParser = require("cookie-parser");
-const mongoSanitize = require("express-mongo-sanitize");
 require("dotenv").config();
 
 const authRoutes = require("./src/routes/authRoutes");
@@ -17,55 +17,75 @@ const announcementRoutes = require("./src/routes/announcementRoutes");
 const adminRoutes = require("./src/routes/adminRoutes");
 
 const config = require("./src/config/config");
+const { sequelize } = require("./src/models");
 const { errorHandler, notFoundHandler } = require("./src/middleware/errorHandler");
 const { requestLogger } = require("./src/middleware/requestLogger");
 const { logger } = require("./src/utils/logger");
 
 const app = express();
+app.set("trust proxy", 1);
 
-// ==================== 1. SECURITY MIDDLEWARE ====================
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'"],
-      fontSrc: ["'self'"],
-      objectSrc: ["'none'"],
-      mediaSrc: ["'self'"],
-      frameSrc: ["'none'"]
-    }
-  },
-  crossOriginEmbedderPolicy: false
-}));
+function deepSanitize(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => deepSanitize(item));
+  }
 
-// CORS Configuration - Production Ready
+  if (value && typeof value === "object") {
+    const clean = {};
+    Object.entries(value).forEach(([key, nested]) => {
+      if (key.startsWith("$") || key.includes(".")) {
+        return;
+      }
+      clean[key] = deepSanitize(nested);
+    });
+    return clean;
+  }
+
+  return value;
+}
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'self'"],
+        frameSrc: ["'none'"]
+      }
+    },
+    crossOriginEmbedderPolicy: false
+  })
+);
+
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    
+
+    const configuredOrigins = Array.isArray(config.ALLOWED_ORIGINS) ? config.ALLOWED_ORIGINS : [];
     const allowedOrigins = [
       process.env.CLIENT_URL,
+      ...configuredOrigins,
       "http://localhost:3000",
       "http://localhost:5000",
       "http://localhost:8080",
       "http://localhost:39772",
       "http://127.0.0.1:39772",
-      "http://10.0.2.2:39772", // Android emulator
-      "https://yourdomain.com",
-      /\.yourdomain\.com$/
+      "http://10.0.2.2:39772"
     ].filter(Boolean);
 
-    if (allowedOrigins.some(allowed => {
+    const isAllowed = allowedOrigins.some((allowed) => {
       if (allowed instanceof RegExp) return allowed.test(origin);
       return allowed === origin;
-    })) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
+    });
+
+    if (isAllowed) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
   },
   credentials: true,
   optionsSuccessStatus: 200,
@@ -82,7 +102,6 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// ==================== 2. RATE LIMITING ====================
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: (req) => {
@@ -98,80 +117,54 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: false,
-  keyGenerator: (req) => {
-    return req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
-  }
+  keyGenerator: (req) => req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress
 });
-
 app.use("/api", apiLimiter);
 
-// ==================== 3. DATA SANITIZATION ====================
-app.use(express.json({ 
-  limit: process.env.MAX_REQUEST_SIZE || "10mb",
-  verify: (req, res, buf) => {
-    req.rawBody = buf.toString();
-  }
-}));
-app.use(express.urlencoded({ 
-  extended: true, 
-  limit: process.env.MAX_REQUEST_SIZE || "10mb",
-  parameterLimit: 50
-}));
+app.use(
+  express.json({
+    limit: process.env.MAX_REQUEST_SIZE || "10mb",
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString();
+    }
+  })
+);
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: process.env.MAX_REQUEST_SIZE || "10mb",
+    parameterLimit: 50
+  })
+);
 app.use(cookieParser());
 
-app.use(mongoSanitize({
-  replaceWith: "_",
-  onSanitize: ({ req, key }) => {
-    logger.warn("[Security] NoSQL injection attempt detected:", {
-      ip: req.ip,
-      key,
-      timestamp: new Date().toISOString()
-    });
-  }
-}));
+app.use((req, res, next) => {
+  req.body = deepSanitize(req.body);
+  req.query = deepSanitize(req.query);
+  req.params = deepSanitize(req.params);
+  next();
+});
 
 app.use(xss());
-app.use(hpp({
-  whitelist: [
-    "page",
-    "limit",
-    "sort",
-    "fields",
-    "employeeId",
-    "date",
-    "status"
-  ]
-}));
+app.use(
+  hpp({
+    whitelist: ["page", "limit", "sort", "fields", "employeeId", "date", "status"]
+  })
+);
 
-// ==================== 4. PERFORMANCE OPTIMIZATION ====================
-app.use(compression({
-  level: 6,
-  threshold: 1024,
-  filter: (req, res) => {
-    if (req.headers["x-no-compression"]) return false;
-    return compression.filter(req, res);
-  }
-}));
-
-// ==================== 5. LOGGING & MONITORING ====================
-app.use(requestLogger);
-
-if (process.env.NODE_ENV === "production") {
-  app.use(morgan("combined", {
-    skip: (req, res) => res.statusCode < 400,
-    stream: {
-      write: (message) => {
-        logger.error(message.trim()); // Log errors to our structured logger
-      }
+app.use(
+  compression({
+    level: 6,
+    threshold: 1024,
+    filter: (req, res) => {
+      if (req.headers["x-no-compression"]) return false;
+      return compression.filter(req, res);
     }
-  }));
-} else {
-  app.use(morgan("dev"));
-}
+  })
+);
 
-// ==================== 6. REQUEST TIMING & TRACING ====================
 app.use((req, res, next) => {
-  req.requestId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+  req.requestId = crypto.randomUUID();
   req.startTime = process.hrtime();
   res.setHeader("X-Request-ID", req.requestId);
   next();
@@ -179,32 +172,46 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
   const start = process.hrtime();
-  
-  // Override res.end to capture response time
   const originalEnd = res.end;
-  res.end = function(...args) {
+
+  res.end = function endWithTiming(...args) {
     const diff = process.hrtime(start);
     const responseTime = (diff[0] * 1e3 + diff[1] * 1e-6).toFixed(2);
     res.setHeader("X-Response-Time", `${responseTime}ms`);
-    
-    if (responseTime > 1000) {
+
+    if (Number.parseFloat(responseTime) > 1000) {
       logger.warn(`[Performance] Slow response detected: ${responseTime}ms`, {
         path: req.path,
         method: req.method,
         requestId: req.requestId
       });
     }
-    
+
     return originalEnd.apply(this, args);
   };
-  
+
   next();
 });
 
-// ==================== 7. ROOT & HEALTH ENDPOINTS ====================
-// Root route for Render health checks
+app.use(requestLogger);
+
+if (process.env.NODE_ENV === "production") {
+  app.use(
+    morgan("combined", {
+      skip: (req, res) => res.statusCode < 400,
+      stream: {
+        write: (message) => {
+          logger.error(message.trim());
+        }
+      }
+    })
+  );
+} else {
+  app.use(morgan("dev"));
+}
+
 app.get("/", (req, res) => {
-  res.status(200).json({ 
+  res.status(200).json({
     status: "ok",
     message: "HR Attendance API is running",
     timestamp: new Date().toISOString(),
@@ -225,7 +232,7 @@ app.get("/", (req, res) => {
 });
 
 app.get("/ping", (req, res) => {
-  res.status(200).json({ 
+  res.status(200).json({
     status: "ok",
     timestamp: new Date().toISOString(),
     service: "hr-attendance-api",
@@ -235,27 +242,19 @@ app.get("/ping", (req, res) => {
   });
 });
 
-// ==================== 8. API ROUTES ====================
 app.use("/api/auth", authRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/leave", leaveRoutes);
 app.use("/api/admin", adminRoutes);
 
-// MongoDB Test Routes (Development Only)
-if (process.env.NODE_ENV === "development") {
-  const mongodbTestRoutes = require("./src/routes/mongodbTestRoutes");
-  app.use("/api/mongodb", mongodbTestRoutes);
-}
-
-// ==================== 9. DEBUG ROUTES (Development Only) ====================
 if (process.env.NODE_ENV === "development") {
   const debugRoutes = require("./src/routes/debugRoutes");
   app.use("/api/debug", debugRoutes);
-  
+
   app.get("/api/debug/routes", (req, res) => {
     const routes = [];
-    app._router.stack.forEach(middleware => {
+    app._router.stack.forEach((middleware) => {
       if (middleware.route) {
         routes.push({
           path: middleware.route.path,
@@ -267,7 +266,6 @@ if (process.env.NODE_ENV === "development") {
   });
 }
 
-// ==================== 10. COMPREHENSIVE HEALTH CHECK ====================
 app.get("/api/health", async (req, res) => {
   const healthcheck = {
     success: true,
@@ -277,7 +275,6 @@ app.get("/api/health", async (req, res) => {
     environment: process.env.NODE_ENV || "development",
     host: config.HOST || "localhost",
     port: config.PORT || 5000,
-    
     system: {
       node: process.version,
       platform: process.platform,
@@ -289,14 +286,15 @@ app.get("/api/health", async (req, res) => {
       uptime: `${Math.floor(process.uptime())}s`,
       cpuUsage: process.cpuUsage()
     },
-    
     services: {
-      database: "unknown",
+      database: "unknown"
     }
   };
 
   try {
-    // Add database check here if needed
+    await sequelize.authenticate();
+    healthcheck.services.database = "connected";
+    healthcheck.services.databaseDialect = sequelize.getDialect();
   } catch (error) {
     healthcheck.success = false;
     healthcheck.status = "DEGRADED";
@@ -308,7 +306,6 @@ app.get("/api/health", async (req, res) => {
   res.status(statusCode).json(healthcheck);
 });
 
-// ==================== 11. ERROR HANDLING ====================
 app.use(notFoundHandler);
 app.use(errorHandler);
 

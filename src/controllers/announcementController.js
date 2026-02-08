@@ -1,44 +1,98 @@
-const Announcement = require("../models/mongo/Announcement");
+const Announcement = require("../models/repositories/Announcement");
+const AuditLog = require("../models/repositories/AuditLog");
+const { auditLogger } = require("../utils/logger");
+
+function toAnnouncementResponse(doc) {
+  return {
+    id: doc._id.toString(),
+    title: doc.title,
+    message: doc.content || doc.message || "",
+    createdBy: doc.author || doc.createdBy || "",
+    createdAt: doc.createdAt,
+    sentToAll: (doc.targetAudience || "all") === "all",
+    priority: doc.priority,
+    targetAudience: doc.targetAudience,
+    startDate: doc.startDate,
+    endDate: doc.endDate,
+    isActive: doc.isActive
+  };
+}
 
 const createAnnouncement = async (req, res) => {
   try {
-    const { title, message } = req.body;
+    const { title, message, priority, targetAudience, endDate } = req.body || {};
 
     if (!title || !message) {
       return res.status(400).json({ success: false, error: "Title and message are required" });
     }
 
     const newAnnouncement = await Announcement.create({
-      title,
-      message,
-      createdBy: req.user.employeeId,
-      sentToAll: true
+      title: String(title).trim(),
+      content: String(message).trim(),
+      author: req.user.employeeId,
+      priority: priority || "normal",
+      targetAudience: targetAudience || "all",
+      endDate: endDate ? new Date(endDate) : undefined,
+      isActive: true
     });
 
-    res.status(201).json({
+    try {
+      await AuditLog.create({
+        actorId: String(req.user.id),
+        actorEmployeeId: req.user.employeeId,
+        targetEmployeeId: "ALL",
+        action: "announcement_create",
+        details: {
+          announcementId: String(newAnnouncement._id),
+          priority: newAnnouncement.priority,
+          targetAudience: newAnnouncement.targetAudience
+        },
+        createdAt: new Date()
+      });
+    } catch (auditError) {
+      auditLogger.warn("Failed to persist announcement audit log", {
+        error: auditError.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return res.status(201).json({
       success: true,
       message: "Announcement created successfully",
-      data: newAnnouncement
+      data: toAnnouncementResponse(newAnnouncement)
     });
   } catch (error) {
-    console.error("Create announcement error:", error);
-    res.status(500).json({ success: false, error: "Failed to create announcement" });
+    auditLogger.error("Create announcement error", {
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json({ success: false, error: "Failed to create announcement" });
   }
 };
 
 const getAnnouncements = async (req, res) => {
   try {
-    const announcements = await Announcement.findAll({
-      order: [['createdAt', 'DESC']]
-    });
+    const now = new Date();
+    const announcements = await Announcement.find({
+      isActive: true,
+      startDate: { $lte: now },
+      $or: [{ endDate: null }, { endDate: { $exists: false } }, { endDate: { $gte: now } }]
+    })
+      .sort({ createdAt: -1 })
+      .lean();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      data: announcements
+      data: announcements.map((doc) => toAnnouncementResponse(doc))
     });
   } catch (error) {
-    console.error("Get announcements error:", error);
-    res.status(500).json({ success: false, error: "Failed to get announcements" });
+    auditLogger.error("Get announcements error", {
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json({ success: false, error: "Failed to get announcements" });
   }
 };
 
@@ -50,19 +104,27 @@ const getAnnouncementById = async (req, res) => {
       return res.status(400).json({ success: false, error: "Announcement ID is required" });
     }
 
-    const announcement = await Announcement.findByPk(announcementId);
+    const announcement = await Announcement.findById(announcementId).lean();
 
     if (!announcement) {
       return res.status(404).json({ success: false, error: "Announcement not found" });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      data: announcement
+      data: toAnnouncementResponse(announcement)
     });
   } catch (error) {
-    console.error("Get announcement by ID error:", error);
-    res.status(500).json({ success: false, error: "Failed to get announcement" });
+    if (error.name === "CastError") {
+      return res.status(400).json({ success: false, error: "Invalid announcement ID format" });
+    }
+
+    auditLogger.error("Get announcement by ID error", {
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json({ success: false, error: "Failed to get announcement" });
   }
 };
 
