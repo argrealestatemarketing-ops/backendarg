@@ -16,8 +16,26 @@
 */
 
 const fs = require("fs");
-const ADODB = require("node-adodb");
 const config = require("../config/config");
+
+let adodbModule = null;
+let adodbLoadError = null;
+
+function getAdodb() {
+  if (adodbModule) return adodbModule;
+  if (adodbLoadError) throw adodbLoadError;
+
+  try {
+    adodbModule = require("node-adodb");
+    return adodbModule;
+  } catch (error) {
+    const moduleError = new Error("Fingerprint Access DB support is unavailable on this host. This is expected on non-Windows deployments.");
+    moduleError.code = "FINGERPRINT_DB_UNSUPPORTED_PLATFORM";
+    moduleError.cause = error;
+    adodbLoadError = moduleError;
+    throw moduleError;
+  }
+}
 
 
 const DEFAULT_OPTIONS = {
@@ -71,6 +89,16 @@ async function init() {
     initializedError = new Error(`Fingerprint DB file not found at ${dbPath}`);
     initializedError.code = "FINGERPRINT_DB_NOT_FOUND";
     console.error("[FingerprintService] DB file not found:", dbPath);
+    initialized = true;
+    return;
+  }
+
+  let ADODB;
+  try {
+    ADODB = getAdodb();
+  } catch (error) {
+    initializedError = error;
+    console.warn("[FingerprintService] node-adodb unavailable. Feature disabled on this host.");
     initialized = true;
     return;
   }
