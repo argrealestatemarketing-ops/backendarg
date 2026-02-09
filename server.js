@@ -174,9 +174,12 @@ class Application {
       logger.warn("Could not determine DB connection target:", e && e.message ? e.message : e);
     }
 
+    let connected = false;
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         await sequelize.authenticate();
+        connected = true;
         logger.info("PostgreSQL connection established");
         break;
       } catch (error) {
@@ -196,6 +199,11 @@ class Application {
     }
 
     const shouldAutoSync = process.env.AUTO_SYNC_DB === "true";
+
+    if (!connected) {
+      logger.error("Failed to establish DB connection after maximum attempts. Aborting startup.");
+      throw new Error("DB_CONNECTION_FAILED");
+    }
 
     if (shouldAutoSync) {
       await sequelize.sync({ alter: false });
