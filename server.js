@@ -132,6 +132,7 @@ class Application {
           logger.error("Exceeded maximum DB reconnect attempts. See Render DB status and environment variables (DATABASE_URL, PGSSLMODE). Consider increasing DB_CONNECT_RETRIES if needed.");
           // Add a short delay so logs have time to flush in Render before exit
           await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
         // backoff before next attempt
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
       }
