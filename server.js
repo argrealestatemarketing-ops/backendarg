@@ -63,6 +63,22 @@ function validateEnvironment() {
     );
     process.exit(1);
   }
+
+  // Extra safety for production: disallow local-only DB hosts (localhost/127.0.0.1) when no DATABASE_URL is provided.
+  try {
+    if ((process.env.NODE_ENV || "").toLowerCase() === "production" && !process.env.DATABASE_URL) {
+      const dbHost = process.env.PGHOST || process.env.DB_HOST || "";
+      if (/^(127\.0\.0\.1|localhost)$/.test(dbHost)) {
+        console.error(
+          "CRITICAL: Database host is set to a loopback address in production. Render cannot reach a local database on 127.0.0.1:1122."
+        );
+        console.error("Please provide a reachable database connection using DATABASE_URL or set PGHOST/PGPORT to an accessible host.");
+        process.exit(1);
+      }
+    }
+  } catch (e) {
+    console.error("Error validating production DB host:", e && e.message ? e.message : e);
+  }
 }
 
 validateEnvironment();
