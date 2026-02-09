@@ -58,10 +58,12 @@ function validateEnvironment() {
               console.warn("Attach a managed Postgres in Render or set a reachable DATABASE_URL when ready.");
             } else {
               console.error(
-                `CRITICAL: DATABASE_URL resolves to a loopback address (${url.hostname}). In production on Render the DB must be reachable from the service.`
+                `CRITICAL: DATABASE_URL resolves to a loopback address (${url.hostname}). In production the DB must be reachable from the service.`
               );
-              console.error("Please set DATABASE_URL to your managed Postgres connection string or use a remote host (not localhost/127.0.0.1).");
-              console.error("To bypass for short-term testing only, set ALLOW_LOCAL_DATABASE_IN_PROD=true (not recommended).");
+              console.error("Action: Attach a Render Managed Postgres to your service or set DATABASE_URL to your managed DB's connection string.");
+              console.error("Steps: In Render dashboard → Databases → Create PostgreSQL → Attach to this Web Service. Remove any manual DATABASE_URL env var that points to localhost/127.0.0.1.");
+              console.error("Docs: https://render.com/docs/managed-databases and https://render.com/docs/troubleshooting-deploys");
+              console.error("Temporary testing: to bypass for short-term testing only, set ALLOW_LOCAL_DATABASE_IN_PROD=true (NOT recommended for production).");
               process.exit(1);
             }
           }
