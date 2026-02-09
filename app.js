@@ -19,6 +19,16 @@ if (process.env.DISABLE_MONGODB && process.env.DISABLE_MONGODB.toLowerCase() ===
   delete process.env.MONGO_URI;
   // Set a flag other modules can check if needed
   process.env.MONGODB_DISABLED = "true";
+} else if ((process.env.NODE_ENV || "").toLowerCase() === "production") {
+  // Enforce disabling legacy MongoDB in production to prevent accidental external
+  // connections when the environment may not be fully controlled by developers.
+  process.env.DISABLE_MONGODB = "true";
+  delete process.env.MONGODB_URI;
+  delete process.env.MONGO_URI;
+  process.env.MONGODB_DISABLED = "true";
+  // Log a clear message for Render logs
+  // eslint-disable-next-line no-console
+  console.warn("Enforcing DISABLE_MONGODB=true in production to prevent legacy MongoDB usage.");
 }
 
 const authRoutes = require("./src/routes/authRoutes");
