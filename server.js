@@ -16,6 +16,36 @@ function validateEnvironment() {
   const missingJwtSecret = !process.env.JWT_SECRET;
   const missingDatabaseConfig = !hasDatabaseUrl && !hasPgVars && !hasLegacyDbVars;
 
+  // Diagnostic summary (mask sensitive values)
+  try {
+    const dbInfo = (() => {
+      if (process.env.DATABASE_URL) {
+        try {
+          // eslint-disable-next-line no-undef
+          const url = new URL(process.env.DATABASE_URL);
+          return `${url.protocol}//${url.hostname}:${url.port || "5432"}/${url.pathname.replace(/^\//, "")}`;
+        } catch (e) {
+          return "DATABASE_URL (invalid format)";
+        }
+      }
+      if (hasPgVars) {
+        return `${process.env.PGHOST || process.env.DB_HOST || "127.0.0.1"}:${process.env.PGPORT || process.env.DB_PORT || "5432"}/${
+          process.env.PGDATABASE || process.env.DB_NAME || "hr_attendance"
+        }`;
+      }
+      return "(no database configured)";
+    })();
+
+    console.error("Environment diagnostics:");
+    console.error(" - NODE_ENV:", process.env.NODE_ENV || "(not set)");
+    console.error(" - DATABASE:", dbInfo);
+    console.error(" - PGSSLMODE:", process.env.PGSSLMODE || "(not set)");
+    console.error(" - JWT_SECRET: ", process.env.JWT_SECRET ? "[SET] (masked)" : "[MISSING]");
+    console.error(" - DISABLE_MONGODB:", process.env.DISABLE_MONGODB || "false");
+  } catch (e) {
+    console.error("Error while printing environment diagnostics:", e && e.message ? e.message : e);
+  }
+
   if (missingJwtSecret || missingDatabaseConfig) {
     const missing = [];
 
@@ -95,13 +125,13 @@ class Application {
       } catch (error) {
         const message = error && error.message ? error.message : String(error);
         console.error(`[Database] Connection failed (${attempt}/${maxAttempts}): ${message}`);
-        logger.error("PostgreSQL connection failed", { attempt, maxAttempts, error: message });
+        // Log full error including stack where available for Render logs
+        logger.error("PostgreSQL connection failed", { attempt, maxAttempts, error: message, stack: error && error.stack });
 
         if (attempt === maxAttempts) {
           logger.error("Exceeded maximum DB reconnect attempts. See Render DB status and environment variables (DATABASE_URL, PGSSLMODE). Consider increasing DB_CONNECT_RETRIES if needed.");
-          throw error;
-        }
-
+          // Add a short delay so logs have time to flush in Render before exit
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         // backoff before next attempt
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
       }
