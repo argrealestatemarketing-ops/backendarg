@@ -25,6 +25,7 @@ Required:
 Optional:
 - `DATABASE_URL_TEST` for integration tests
 - `PGSSLMODE=require` for managed DB SSL
+- `ALLOW_LOCAL_DATABASE_IN_PROD` — set to `true` to bypass loopback DB host checks in production for short-term testing only. **Not recommended for production**; attach a managed Postgres instead.
 
 ## Migrations and Seeds
 ```bash
