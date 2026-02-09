@@ -84,7 +84,7 @@ const appConfig = {
 };
 
 if (appConfig.NODE_ENV === "production") {
-  const requiredEnvVars = ["JWT_SECRET", "ALLOWED_ORIGINS"];
+  const requiredEnvVars = ["JWT_SECRET"];
   if (!process.env.DATABASE_URL) {
     requiredEnvVars.push("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD");
   }
@@ -94,6 +94,10 @@ if (appConfig.NODE_ENV === "production") {
     console.error("Missing required environment variables in production:");
     missing.forEach((name) => console.error(` - ${name}`));
     process.exit(1);
+  }
+
+  if (!process.env.ALLOWED_ORIGINS) {
+    console.warn("ALLOWED_ORIGINS is not set; CORS will use local defaults only.");
   }
 
   console.log("Production mode: PostgreSQL is configured as primary datastore");

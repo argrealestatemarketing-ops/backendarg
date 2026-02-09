@@ -10,6 +10,17 @@ const hpp = require("hpp");
 const cookieParser = require("cookie-parser");
 require("dotenv").config();
 
+// 🔧 Disable MongoDB at startup when requested
+// Set DISABLE_MONGODB=true in your environment (Render env or .env) to ensure
+// legacy / archive Mongo code does not attempt to connect at runtime.
+if (process.env.DISABLE_MONGODB && process.env.DISABLE_MONGODB.toLowerCase() === "true") {
+  // Remove any Mongo connection URIs to prevent accidental connections
+  delete process.env.MONGODB_URI;
+  delete process.env.MONGO_URI;
+  // Set a flag other modules can check if needed
+  process.env.MONGODB_DISABLED = "true";
+}
+
 const authRoutes = require("./src/routes/authRoutes");
 const attendanceRoutes = require("./src/routes/attendanceRoutes");
 const leaveRoutes = require("./src/routes/leaveRoutes");

@@ -1,5 +1,6 @@
 // CLI to import from an Excel/CSV file
 // Usage: node scripts/import_from_xlsx.js <path-to-file> [--dry-run]
+// Note: uses exceljs now (replaced xlsx due to security advisory)
 
 const path = require('path');
 (async () => {

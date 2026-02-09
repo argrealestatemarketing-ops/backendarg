@@ -1,4 +1,4 @@
-const XLSX = require("xlsx");
+const ExcelJS = require("exceljs");
 const bcrypt = require("bcryptjs");
 const User = require("../models/repositories/User");
 const Attendance = require("../models/repositories/Attendance");
@@ -29,60 +29,66 @@ function normalizeEmployeeCandidates(rawPin) {
   return [...new Set(candidates)];
 }
 
-function extractUsersFromWorkbook(workbook) {
+async function extractUsersFromWorkbook(workbook) {
   const users = new Map();
-  const sheetNamesLower = workbook.SheetNames.map((s) => s.toLowerCase());
-  const usersSheetName = workbook.SheetNames[sheetNamesLower.indexOf("users")];
+  const worksheet = workbook.getWorksheet("users") || workbook.worksheets[0];
+  if (!worksheet) return users;
 
-  if (usersSheetName) {
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[usersSheetName], { defval: null });
-    for (const row of rows) {
-      const pin = row.Pin || row.PIN || row.pin || row.EmployeeId || row.employeeId || row.EmployeeID || row.ID || row.Id;
-      const name = row.Name || row.FullName || row.NAME;
-      if (!pin) continue;
+  // Get header row
+  const headerRow = worksheet.getRow(1);
+  const headers = headerRow.values.map((h) => (h === undefined || h === null ? null : String(h).trim()));
 
-      const pinString = String(pin).trim();
-      users.set(pinString, {
-        pin: pinString,
-        name: name ? String(name).trim() : null
-      });
-    }
-  }
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return; // skip header
+    const rowObj = {};
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const key = headers[colNumber] || `col${colNumber}`;
+      rowObj[key] = cell.value === undefined ? null : cell.value;
+    });
+
+    const pin = rowObj.Pin || rowObj.PIN || rowObj.pin || rowObj.EmployeeId || rowObj.employeeId || rowObj.EmployeeID || rowObj.ID || rowObj.Id;
+    const name = rowObj.Name || rowObj.FullName || rowObj.NAME;
+    if (!pin) return;
+
+    const pinString = String(pin).trim();
+    users.set(pinString, {
+      pin: pinString,
+      name: name ? String(name).trim() : null
+    });
+  });
 
   return users;
 }
 
 function extractAttendanceRowsFromWorkbook(workbook) {
   const attendanceRows = [];
-  const sheetNamesLower = workbook.SheetNames.map((s) => s.toLowerCase());
-  const attendanceSheetName = workbook.SheetNames[sheetNamesLower.indexOf("attendance")];
+  const worksheet = workbook.getWorksheet("attendance") || workbook.worksheets[0];
+  if (!worksheet) return attendanceRows;
 
-  const parseRows = (rows) => {
-    for (const row of rows) {
-      const pin = row.Pin || row.PIN || row.pin || row.EmployeeId || row.employeeId || row.EmployeeID || row.ID || row.Id;
-      const dateValue = row.Date || row.date || row.CheckDate || row.CHECKDATE || row.Check_Date;
-      const timeValue = row.Time || row.time || row.CheckTime || row.CHECKTIME || row.Check_Time;
-      if (!pin || !dateValue) continue;
+  // Get header row
+  const headerRow = worksheet.getRow(1);
+  const headers = headerRow.values.map((h) => (h === undefined || h === null ? null : String(h).trim()));
 
-      const parsed = timeValue ? new Date(`${dateValue} ${timeValue}`) : new Date(String(dateValue));
-      if (Number.isNaN(parsed.getTime())) continue;
+  for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
+    const row = worksheet.getRow(rowNumber);
+    const rowObj = {};
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const key = headers[colNumber] || `col${colNumber}`;
+      rowObj[key] = cell.value === undefined ? null : cell.value;
+    });
 
-      attendanceRows.push({
-        employeeId: String(pin).trim(),
-        checkTime: parsed
-      });
-    }
-  };
+    const pin = rowObj.Pin || rowObj.PIN || rowObj.pin || rowObj.EmployeeId || rowObj.employeeId || rowObj.EmployeeID || rowObj.ID || rowObj.Id;
+    const dateValue = rowObj.Date || rowObj.date || rowObj.CheckDate || rowObj.CHECKDATE || rowObj.Check_Date;
+    const timeValue = rowObj.Time || rowObj.time || rowObj.CheckTime || rowObj.CHECKTIME || rowObj.Check_Time;
+    if (!pin || !dateValue) continue;
 
-  if (attendanceSheetName) {
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[attendanceSheetName], { defval: null });
-    parseRows(rows);
-    return attendanceRows;
-  }
+    const parsed = timeValue ? new Date(`${dateValue} ${timeValue}`) : new Date(String(dateValue));
+    if (Number.isNaN(parsed.getTime())) continue;
 
-  if (workbook.SheetNames.length > 0) {
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null });
-    parseRows(rows);
+    attendanceRows.push({
+      employeeId: String(pin).trim(),
+      checkTime: parsed
+    });
   }
 
   return attendanceRows;
@@ -216,10 +222,13 @@ async function importFromWorkbook(workbook, { dryRun = false } = {}) {
   try {
     let wb = workbook;
     if (typeof workbook === "string") {
-      wb = XLSX.readFile(workbook);
+      const workbookPath = workbook;
+      const reader = new ExcelJS.Workbook();
+      await reader.xlsx.readFile(workbookPath);
+      wb = reader;
     }
 
-    const users = extractUsersFromWorkbook(wb);
+    const users = await extractUsersFromWorkbook(wb);
     const attendanceRows = extractAttendanceRowsFromWorkbook(wb);
 
     summary.usersFound = users.size;

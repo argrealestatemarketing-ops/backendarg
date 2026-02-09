@@ -3,8 +3,9 @@ services:
 - type: web
   name: hr-attendance-backend
   runtime: node
-  buildCommand: npm install
+  buildCommand: npm ci --omit=optional
   startCommand: npm run start
+  releaseCommand: npm run db:migrate
   envVars:
   - key: NODE_ENV
     value: production
@@ -14,5 +15,9 @@ services:
     sync: false  # Will be set in Render dashboard
   - key: PORT
     value: 3000
-  healthCheckPath: /
+  - key: PGSSLMODE
+    value: require
+  - key: DISABLE_MONGODB
+    value: "true"
+  healthCheckPath: /api/health
   autoDeploy: true

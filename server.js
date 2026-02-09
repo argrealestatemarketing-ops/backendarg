@@ -51,6 +51,13 @@ const logger = winston.createLogger({
   ),
   defaultMeta: { service: "hr-attendance-api" },
   transports: [
+    new winston.transports.Console({
+      level: NODE_ENV === "development" ? "debug" : "info",
+      format:
+        NODE_ENV === "production"
+          ? winston.format.combine(winston.format.timestamp(), winston.format.json())
+          : winston.format.combine(winston.format.colorize(), winston.format.simple())
+    }),
     new DailyRotateFile({
       filename: "logs/error-%DATE%.log",
       datePattern: "YYYY-MM-DD",
@@ -67,14 +74,6 @@ const logger = winston.createLogger({
   ]
 });
 
-if (NODE_ENV !== "production") {
-  logger.add(
-    new winston.transports.Console({
-      format: winston.format.combine(winston.format.colorize(), winston.format.simple())
-    })
-  );
-}
-
 class Application {
   constructor() {
     this.server = null;
@@ -83,8 +82,30 @@ class Application {
   }
 
   async initializeDatabase() {
-    await sequelize.authenticate();
-    logger.info("PostgreSQL connection established");
+    const maxAttempts = Number.parseInt(process.env.DB_CONNECT_RETRIES || "15", 10);
+    const retryDelayMs = Number.parseInt(process.env.DB_CONNECT_RETRY_DELAY_MS || "5000", 10);
+
+    logger.info(`Database connection configured: maxAttempts=${maxAttempts}, retryDelayMs=${retryDelayMs}ms`);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await sequelize.authenticate();
+        logger.info("PostgreSQL connection established");
+        break;
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        console.error(`[Database] Connection failed (${attempt}/${maxAttempts}): ${message}`);
+        logger.error("PostgreSQL connection failed", { attempt, maxAttempts, error: message });
+
+        if (attempt === maxAttempts) {
+          logger.error("Exceeded maximum DB reconnect attempts. See Render DB status and environment variables (DATABASE_URL, PGSSLMODE). Consider increasing DB_CONNECT_RETRIES if needed.");
+          throw error;
+        }
+
+        // backoff before next attempt
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
 
     const shouldAutoSync = process.env.AUTO_SYNC_DB === "true";
 
@@ -238,6 +259,8 @@ class Application {
       this.setupErrorHandlers();
       this.setupHealthCheck();
     } catch (error) {
+      const message = error && error.message ? error.message : String(error);
+      console.error(`[Startup] Application failed to start: ${message}`);
       logger.error("Application failed to start:", error);
       await this.gracefulExit(1);
     }
