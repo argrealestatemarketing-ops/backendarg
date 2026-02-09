@@ -42,6 +42,27 @@ function validateEnvironment() {
     console.error(" - PGSSLMODE:", process.env.PGSSLMODE || "(not set)");
     console.error(" - JWT_SECRET: ", process.env.JWT_SECRET ? "[SET] (masked)" : "[MISSING]");
     console.error(" - DISABLE_MONGODB:", process.env.DISABLE_MONGODB || "false");
+
+    // Additional production check: if DATABASE_URL is provided but points at loopback, fail fast
+    try {
+      if ((process.env.NODE_ENV || "").toLowerCase() === "production" && process.env.DATABASE_URL) {
+        try {
+          // eslint-disable-next-line no-undef
+          const url = new URL(process.env.DATABASE_URL);
+          if (/^(127\.0\.0\.1|localhost)$/.test(url.hostname)) {
+            console.error(
+              `CRITICAL: DATABASE_URL resolves to a loopback address (${url.hostname}). In production on Render the DB must be reachable from the service.`
+            );
+            console.error("Please set DATABASE_URL to your managed Postgres connection string or use a remote host (not localhost/127.0.0.1).");
+            process.exit(1);
+          }
+        } catch (parseError) {
+          console.warn("Warning: Could not parse DATABASE_URL for host validation:", parseError && parseError.message ? parseError.message : parseError);
+        }
+      }
+    } catch (e) {
+      console.error("Error validating DATABASE_URL host:", e && e.message ? e.message : e);
+    }
   } catch (e) {
     console.error("Error while printing environment diagnostics:", e && e.message ? e.message : e);
   }
@@ -132,6 +153,26 @@ class Application {
     const retryDelayMs = Number.parseInt(process.env.DB_CONNECT_RETRY_DELAY_MS || "5000", 10);
 
     logger.info(`Database connection configured: maxAttempts=${maxAttempts}, retryDelayMs=${retryDelayMs}ms`);
+
+    // Log connection target for debugging (masked)
+    try {
+      if (process.env.DATABASE_URL) {
+        try {
+          // eslint-disable-next-line no-undef
+          const parsed = new URL(process.env.DATABASE_URL);
+          logger.info(`Connecting using DATABASE_URL to ${parsed.hostname}:${parsed.port || 5432}/${parsed.pathname.replace(/^\//, '')} (masked)`);
+        } catch (parseError) {
+          logger.info(`Connecting using DATABASE_URL (masked)`);
+        }
+      } else {
+        const host = process.env.PGHOST || process.env.DB_HOST || "127.0.0.1";
+        const port = process.env.PGPORT || process.env.DB_PORT || "5432";
+        const dbname = process.env.PGDATABASE || process.env.DB_NAME || "hr_attendance";
+        logger.info(`Connecting to DB at ${host}:${port}/${dbname}`);
+      }
+    } catch (e) {
+      logger.warn("Could not determine DB connection target:", e && e.message ? e.message : e);
+    }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
