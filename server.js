@@ -41,7 +41,7 @@ function validateEnvironment() {
     console.error(" - DATABASE:", dbInfo);
     console.error(" - PGSSLMODE:", process.env.PGSSLMODE || "(not set)");
     console.error(" - JWT_SECRET: ", process.env.JWT_SECRET ? "[SET] (masked)" : "[MISSING]");
-    console.error(" - DISABLE_MONGODB:", process.env.DISABLE_MONGODB || "false");
+    // MongoDB support removed; DISABLE_MONGODB is no longer applicable.
 
     // Additional production check: if DATABASE_URL is provided but points at loopback, fail fast
     try {

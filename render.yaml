@@ -17,7 +17,6 @@ services:
     value: 3000
   - key: PGSSLMODE
     value: require
-  - key: DISABLE_MONGODB
-    value: "true"
+
   healthCheckPath: /api/health
   autoDeploy: true
