@@ -18,7 +18,7 @@ function normalizeId(val) {
   return String(val).trim();
 }
 
-function loadFromFile() {
+async function loadFromFile() {
   const filePath = config.EMPLOYEE_EXCEL_PATH;
   if (!filePath) {
     enabled = false;
@@ -112,16 +112,16 @@ async function init() {
     return;
   }
   try {
-    loadFromFile();
+    await loadFromFile();
     // Watch file for changes to reload automatically
     const resolved = path.isAbsolute(config.EMPLOYEE_EXCEL_PATH) ? config.EMPLOYEE_EXCEL_PATH : path.resolve(process.cwd(), config.EMPLOYEE_EXCEL_PATH);
     if (!watcher) {
       watcher = fs.watch(resolved, () => {
         try {
           // Debounce rapid events by reloading after short timeout
-          setTimeout(() => {
+          setTimeout(async () => {
             try {
-              loadFromFile();
+              await loadFromFile();
               console.log("[ExcelService] Reloaded employees from Excel file");
             } catch (error) {
               console.error("[ExcelService] Reload error:", error && error.message ? error.message : error);
