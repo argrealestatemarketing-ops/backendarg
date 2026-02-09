@@ -43,18 +43,27 @@ function validateEnvironment() {
     console.error(" - JWT_SECRET: ", process.env.JWT_SECRET ? "[SET] (masked)" : "[MISSING]");
     // MongoDB support removed; DISABLE_MONGODB is no longer applicable.
 
-    // Additional production check: if DATABASE_URL is provided but points at loopback, fail fast
+    // Additional production check: if DATABASE_URL is provided but points at loopback, fail fast (opt-in bypass available)
     try {
+      const allowLocalInProd = process.env.ALLOW_LOCAL_DATABASE_IN_PROD === "true";
       if ((process.env.NODE_ENV || "").toLowerCase() === "production" && process.env.DATABASE_URL) {
         try {
           // eslint-disable-next-line no-undef
           const url = new URL(process.env.DATABASE_URL);
           if (/^(127\.0\.0\.1|localhost)$/.test(url.hostname)) {
-            console.error(
-              `CRITICAL: DATABASE_URL resolves to a loopback address (${url.hostname}). In production on Render the DB must be reachable from the service.`
-            );
-            console.error("Please set DATABASE_URL to your managed Postgres connection string or use a remote host (not localhost/127.0.0.1).");
-            process.exit(1);
+            if (allowLocalInProd) {
+              console.warn(
+                `WARNING: ALLOW_LOCAL_DATABASE_IN_PROD=true — allowing local database host (${url.hostname}) in production. This is for short-term testing only and is NOT recommended for real production.`
+              );
+              console.warn("Attach a managed Postgres in Render or set a reachable DATABASE_URL when ready.");
+            } else {
+              console.error(
+                `CRITICAL: DATABASE_URL resolves to a loopback address (${url.hostname}). In production on Render the DB must be reachable from the service.`
+              );
+              console.error("Please set DATABASE_URL to your managed Postgres connection string or use a remote host (not localhost/127.0.0.1).");
+              console.error("To bypass for short-term testing only, set ALLOW_LOCAL_DATABASE_IN_PROD=true (not recommended).");
+              process.exit(1);
+            }
           }
         } catch (parseError) {
           console.warn("Warning: Could not parse DATABASE_URL for host validation:", parseError && parseError.message ? parseError.message : parseError);
@@ -87,14 +96,21 @@ function validateEnvironment() {
 
   // Extra safety for production: disallow local-only DB hosts (localhost/127.0.0.1) when no DATABASE_URL is provided.
   try {
+    const allowLocalInProd = process.env.ALLOW_LOCAL_DATABASE_IN_PROD === "true";
     if ((process.env.NODE_ENV || "").toLowerCase() === "production" && !process.env.DATABASE_URL) {
       const dbHost = process.env.PGHOST || process.env.DB_HOST || "";
       if (/^(127\.0\.0\.1|localhost)$/.test(dbHost)) {
-        console.error(
-          "CRITICAL: Database host is set to a loopback address in production. Render cannot reach a local database on 127.0.0.1:1122."
-        );
-        console.error("Please provide a reachable database connection using DATABASE_URL or set PGHOST/PGPORT to an accessible host.");
-        process.exit(1);
+        if (allowLocalInProd) {
+          console.warn(
+            "WARNING: ALLOW_LOCAL_DATABASE_IN_PROD=true — allowing loopback DB host in production for testing. Attach a managed Postgres or set a reachable DB before production use."
+          );
+        } else {
+          console.error(
+            "CRITICAL: Database host is set to a loopback address in production. Render cannot reach a local database on 127.0.0.1:1122."
+          );
+          console.error("Please provide a reachable database connection using DATABASE_URL or set PGHOST/PGPORT to an accessible host.");
+          process.exit(1);
+        }
       }
     }
   } catch (e) {
