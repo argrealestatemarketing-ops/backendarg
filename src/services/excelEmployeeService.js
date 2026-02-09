@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const xlsx = require("xlsx");
+const ExcelJS = require("exceljs");
 const config = require("../config/config");
 
 let enabled = false;
@@ -18,7 +18,7 @@ function normalizeId(val) {
   return String(val).trim();
 }
 
-function loadFromFile() {
+async function loadFromFile() {
   const filePath = config.EMPLOYEE_EXCEL_PATH;
   if (!filePath) {
     enabled = false;
@@ -35,10 +35,20 @@ function loadFromFile() {
   const stat = fs.statSync(resolved);
   fileMtime = stat.mtimeMs;
 
-  const workbook = xlsx.readFile(resolved, { cellDates: true });
-  const sheetName = workbook.SheetNames && workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
-  const rows = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(resolved);
+  const worksheet = workbook.worksheets[0];
+
+  // Convert worksheet to array-of-arrays similar to xlsx.utils.sheet_to_json(header=1)
+  const rows = [];
+  worksheet.eachRow({ includeEmpty: true }, (row) => {
+    const rowVals = [];
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      const val = cell.value === null || cell.value === undefined ? "" : (cell.text || String(cell.value));
+      rowVals.push(val);
+    });
+    rows.push(rowVals);
+  });
 
   if (!rows || rows.length === 0) {
     employeeSet = new Set();
@@ -102,16 +112,16 @@ async function init() {
     return;
   }
   try {
-    loadFromFile();
+    await loadFromFile();
     // Watch file for changes to reload automatically
     const resolved = path.isAbsolute(config.EMPLOYEE_EXCEL_PATH) ? config.EMPLOYEE_EXCEL_PATH : path.resolve(process.cwd(), config.EMPLOYEE_EXCEL_PATH);
     if (!watcher) {
       watcher = fs.watch(resolved, () => {
         try {
           // Debounce rapid events by reloading after short timeout
-          setTimeout(() => {
+          setTimeout(async () => {
             try {
-              loadFromFile();
+              await loadFromFile();
               console.log("[ExcelService] Reloaded employees from Excel file");
             } catch (error) {
               console.error("[ExcelService] Reload error:", error && error.message ? error.message : error);

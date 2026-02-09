@@ -63,7 +63,7 @@
     "sequelize": "^6.33.0",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^4.7.1",
-    "xlsx": "^0.18.5",
+    "exceljs": "^4.3.0",
     "xss-clean": "^0.1.4"
   },
   "optionalDependencies": {

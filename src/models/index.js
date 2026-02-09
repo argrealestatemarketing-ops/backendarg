@@ -1,12 +1,30 @@
 const { Sequelize } = require("sequelize");
 
+function shouldUseSsl() {
+  const rawMode = (process.env.PGSSLMODE || process.env.DB_SSL_MODE || "").toLowerCase().trim();
+
+  if (["disable", "disabled", "off", "false", "0"].includes(rawMode)) {
+    return false;
+  }
+
+  if (["require", "required", "on", "true", "1", "no-verify"].includes(rawMode)) {
+    return true;
+  }
+
+  const databaseUrl = process.env.DATABASE_URL || "";
+  if (/sslmode=require|ssl=true|ssl=1/i.test(databaseUrl)) {
+    return true;
+  }
+
+  return false;
+}
+
 function buildSequelize() {
   const commonOptions = {
     logging: false
   };
 
-  const enableSsl =
-    process.env.PGSSLMODE === "require" || process.env.NODE_ENV === "production";
+  const enableSsl = shouldUseSsl();
 
   if (process.env.DATABASE_URL) {
     return new Sequelize(process.env.DATABASE_URL, {
